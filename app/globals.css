@@ -1,0 +1,176 @@
+@import "tailwindcss";
+
+/* ── Rink tokens ─────────────────────────────────────────────── */
+:root {
+  --surface: #f4f7fa; /* ice */
+  --card: #ffffff;
+  --ink: #101b26;
+  --muted: #52667a;
+  --faint: #8fa2b5;
+  --line: #dce5ec;
+  --rink-red: #c8102e; /* center line */
+  --rink-blue: #1e63ae; /* blue line */
+  --chip-bg: #e9eff5;
+
+  /* fresh → cooked (validated, light) */
+  --zone-1: #1e63ae;
+  --zone-2: #3d7ec6;
+  --zone-3: #76818e;
+  --zone-4: #c0722a;
+  --zone-5: #b23a24;
+
+  --gauge-track: #e3eaf1;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface: #12181f; /* ice after the lights go down */
+    --card: #1a222c;
+    --ink: #e7eef5;
+    --muted: #90a2b4;
+    --faint: #64788c;
+    --line: #2a3641;
+    --rink-red: #e5304e;
+    --rink-blue: #5e9ad0;
+    --chip-bg: #232e3a;
+
+    /* fresh → cooked (validated, dark) */
+    --zone-1: #2e6fbe;
+    --zone-2: #5e9ad0;
+    --zone-3: #8a94a0;
+    --zone-4: #cc8130;
+    --zone-5: #ce4b2e;
+
+    --gauge-track: #232e3a;
+  }
+}
+
+body {
+  background: var(--surface);
+  color: var(--ink);
+  font-family: var(--font-body), system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+/* ── Type roles ──────────────────────────────────────────────── */
+.display {
+  font-family: var(--font-display), sans-serif;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  line-height: 1;
+}
+.stat {
+  font-family: var(--font-mono), monospace;
+  font-variant-numeric: tabular-nums;
+}
+.eyebrow {
+  font-family: var(--font-display), sans-serif;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+/* ── Structure: rink lines ───────────────────────────────────── */
+.center-line {
+  height: 4px;
+  background: var(--rink-red);
+  border: none;
+}
+.blue-line {
+  height: 2px;
+  background: var(--rink-blue);
+  opacity: 0.55;
+  border: none;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.chip {
+  display: inline-block;
+  padding: 0.1rem 0.55rem;
+  border-radius: 999px;
+  font-family: var(--font-display), sans-serif;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 0.72rem;
+  background: var(--chip-bg);
+  color: var(--muted);
+}
+
+/* ── Leaderboard table ───────────────────────────────────────── */
+.board {
+  width: 100%;
+  border-collapse: collapse;
+}
+.board th {
+  text-align: left;
+  font-family: var(--font-display), sans-serif;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 0.7rem;
+  color: var(--muted);
+  padding: 0.6rem 0.75rem;
+  border-bottom: 2px solid var(--rink-blue);
+}
+.board td {
+  padding: 0.55rem 0.75rem;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+.board tbody tr:hover {
+  background: color-mix(in oklab, var(--rink-blue) 6%, var(--card));
+}
+.board a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* ── Controls ────────────────────────────────────────────────── */
+.control {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  padding: 0.45rem 0.7rem;
+  font-size: 0.9rem;
+  font-family: var(--font-body), sans-serif;
+}
+.control:focus-visible {
+  outline: 2px solid var(--rink-blue);
+  outline-offset: 1px;
+}
+.btn {
+  background: var(--ink);
+  color: var(--surface);
+  border-radius: 8px;
+  padding: 0.45rem 1rem;
+  font-family: var(--font-display), sans-serif;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.btn:focus-visible {
+  outline: 2px solid var(--rink-blue);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

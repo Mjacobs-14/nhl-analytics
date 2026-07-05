@@ -1,7 +1,29 @@
+# dependencies
+/node_modules
+
+# next.js
+/.next/
+/out/
+/build
+
+# env / secrets — Supabase keys live in env vars and GitHub secrets, never here
 .env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+
+# python (etl/)
 __pycache__/
 *.pyc
 .venv/
 venv/
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# misc
 .DS_Store
-.streamlit/secrets.toml
+*.pem
+npm-debug.log*
+.vercel
