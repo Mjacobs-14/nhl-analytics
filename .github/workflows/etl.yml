@@ -1,0 +1,28 @@
+name: Daily NHL Data Pull
+
+on:
+  schedule:
+    # Runs every day at 9:00 UTC (~4-5am ET) — after most games are final
+    - cron: "0 9 * * *"
+  workflow_dispatch: {}   # lets you also trigger it manually from the Actions tab
+
+jobs:
+  run-etl:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r etl/requirements.txt
+
+      - name: Run ETL for yesterday's games
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python etl/pull_nhl_data.py
