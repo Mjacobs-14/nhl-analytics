@@ -76,6 +76,26 @@ join teams t on t.team_id = tgs.team_id
 join games g on g.game_id = tgs.game_id
 group by t.team_id, t.team_name, g.season;
 
+-- Cooked Score leaderboard -------------------------------------------------------
+-- Model output (scripts/cook.ts) joined with player bios, ready for
+-- dashboards/notebooks. The Next.js app reads the tables directly.
+create or replace view cooked_leaderboard_v as
+select
+    cs.player_id,
+    p.full_name,
+    p.position,
+    p.current_team_id as team_id,
+    cs.season,
+    cs.score,
+    cs.label,
+    cs.games_played,
+    cs.points_per_game,
+    cs.peak_points_per_game,
+    cs.computed_at
+from cooked_scores cs
+join players p on p.player_id = cs.player_id
+where cs.status = 'scored';
+
 -- ============================================================
 -- TEMPLATE for adding your own underrepresented metric:
 --

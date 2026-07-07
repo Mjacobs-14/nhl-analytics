@@ -189,7 +189,7 @@ def upsert_game(sb, game_json, boxscore_json):
     db_execute(sb.table("games").upsert({
         "game_id": game_id,
         "game_date": game_json.get("gameDate", "")[:10] or game_json.get("startTimeUTC", "")[:10],
-        "season": str(game_json.get("season", "")),
+        "season": game_json.get("season"),
         "game_type": {1: "preseason", 2: "regular", 3: "playoff"}.get(game_json.get("gameType"), "unknown"),
         "home_team_id": home.get("abbrev"),
         "away_team_id": away.get("abbrev"),
@@ -201,7 +201,7 @@ def upsert_game(sb, game_json, boxscore_json):
     return game_id
 
 
-def upsert_players_and_stats(sb, game_id, boxscore_json):
+def upsert_players_and_stats(sb, game_id, boxscore_json, season=None, game_date=None):
     """Loops through both teams' player stats in the boxscore payload."""
     player_stats = boxscore_json.get("playerByGameStats", {})
 
@@ -229,6 +229,8 @@ def upsert_players_and_stats(sb, game_id, boxscore_json):
                     "game_id": game_id,
                     "player_id": player_id,
                     "team_id": team_id,
+                    "season": season,
+                    "game_date": game_date,
                     "position": p.get("position"),
                     "goals": p.get("goals", 0),
                     "assists": p.get("assists", 0),
@@ -317,7 +319,11 @@ def run_for_range(sb, start: date, end: date, max_workers: int = 3, force: bool 
 
             try:
                 upsert_game(sb, g, boxscore)
-                upsert_players_and_stats(sb, g["id"], boxscore)
+                upsert_players_and_stats(
+                    sb, g["id"], boxscore,
+                    season=g.get("season"),
+                    game_date=(g.get("gameDate", "") or g.get("startTimeUTC", ""))[:10] or None,
+                )
             except Exception as e:
                 print(f"  ! DB error on game {g['id']}: {e}")
 
