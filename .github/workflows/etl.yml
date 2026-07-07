@@ -21,8 +21,20 @@ jobs:
       - name: Install dependencies
         run: pip install -r etl/requirements.txt
 
-      - name: Run ETL for yesterday's games
+      - name: Run boxscore ETL for yesterday's games
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: python etl/pull_nhl_data.py
+
+      - name: Run Edge data pull (current season, skips anything already pulled)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python etl/pull_edge_data.py --seasons 20252026
+
+      - name: Run play-by-play game-state ETL (skips games already processed)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python etl/pull_play_by_play.py
