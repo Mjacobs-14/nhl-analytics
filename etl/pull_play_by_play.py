@@ -1,17 +1,20 @@
 """
-Game State ETL Pipeline
-=======================
+Game State + Shot Location ETL Pipeline
+========================================
 Pulls play-by-play data for games already in your `games` table and
-derives the score situation (tied, up 1, down 2, etc.) at the moment
-of every goal — something the boxscore data can't tell you, since it
-only has final totals.
+derives (1) the score situation (tied, up 1, down 2, etc.) at the
+moment of every goal, and (2) location + strength-state data for
+every shot attempt (on goal, missed, blocked, and goals themselves)
+— none of which the boxscore data can tell you, since it only has
+final totals.
 
 Reuses the same resilience patterns as pull_nhl_data.py: shared
 rate-limit cooldown, network-error retries, DB write retries, and
 skip-existing on rerun.
 
-SETUP: run sql/007_game_state_schema.sql in Supabase first. Same
-SUPABASE_URL / SUPABASE_KEY env vars as the other scripts.
+SETUP: run sql/007_game_state_schema.sql and sql/010_shot_events_schema.sql
+in Supabase first. Same SUPABASE_URL / SUPABASE_KEY env vars as the
+other scripts.
 
 USAGE:
     python pull_play_by_play.py                       # all games in DB
@@ -29,6 +32,8 @@ import requests
 from supabase import create_client
 
 NHL_API_BASE = "https://api-web.nhle.com/v1"
+
+SHOT_EVENT_TYPES = {"shot-on-goal", "missed-shot", "blocked-shot", "goal"}
 
 _cooldown_lock = threading.Lock()
 _cooldown_until = 0.0
@@ -140,13 +145,20 @@ def get_games_to_process(sb, season=None, limit=None):
 
 
 def get_existing_pbp_game_ids(sb):
-    """Games already processed for play-by-play, so reruns skip them."""
+    """Games already processed for play-by-play, so reruns skip them.
+
+    Checked against shot_events (not goal_events): it's the superset —
+    every processed game gets shot_events rows, but only games with at
+    least one goal get goal_events rows. Using goal_events here would
+    wrongly skip re-processing games that already have goals recorded
+    from before shot_events existed.
+    """
     existing = set()
     page_size = 1000
     offset = 0
     while True:
         result = (
-            sb.table("goal_events")
+            sb.table("shot_events")
             .select("game_id")
             .range(offset, offset + page_size - 1)
             .execute()
@@ -164,7 +176,7 @@ def get_existing_pbp_game_ids(sb):
 def process_game(sb, game_id):
     payload = fetch_json(f"{NHL_API_BASE}/gamecenter/{game_id}/play-by-play")
     if not payload:
-        return 0
+        return 0, 0
 
     home_team = payload.get("homeTeam", {})
     away_team = payload.get("awayTeam", {})
@@ -174,13 +186,47 @@ def process_game(sb, game_id):
     away_abbrev = away_team.get("abbrev")
 
     goals_processed = 0
+    shots_processed = 0
 
     for play in payload.get("plays", []):
-        if play.get("typeDescKey") != "goal":
+        play_type = play.get("typeDescKey")
+        if play_type not in SHOT_EVENT_TYPES:
             continue
 
         details = play.get("details", {}) or {}
         event_id = play.get("eventId")
+
+        if event_id is not None:
+            team_numeric_id = details.get("eventOwnerTeamId")
+            if team_numeric_id == home_numeric_id:
+                team_abbrev = home_abbrev
+            elif team_numeric_id == away_numeric_id:
+                team_abbrev = away_abbrev
+            else:
+                team_abbrev = None
+
+            db_execute(sb.table("shot_events").upsert({
+                "game_id": game_id,
+                "event_id": event_id,
+                "event_type": play_type,
+                "period": play.get("periodDescriptor", {}).get("number"),
+                "period_type": play.get("periodDescriptor", {}).get("periodType"),
+                "time_in_period": play.get("timeInPeriod"),
+                "team_id": team_abbrev,
+                "shooting_player_id": details.get("shootingPlayerId") or details.get("scoringPlayerId"),
+                "goalie_player_id": details.get("goalieInNetId"),
+                "blocking_player_id": details.get("blockingPlayerId"),
+                "x_coord": details.get("xCoord"),
+                "y_coord": details.get("yCoord"),
+                "zone_code": details.get("zoneCode"),
+                "shot_type": details.get("shotType"),
+                "situation_code": play.get("situationCode"),
+            }, on_conflict="game_id,event_id"), description=f"shot_events {game_id}/{event_id}")
+            shots_processed += 1
+
+        if play_type != "goal":
+            continue
+
         home_score_after = details.get("homeScore")
         away_score_after = details.get("awayScore")
         scoring_numeric_team_id = details.get("eventOwnerTeamId")
@@ -238,7 +284,7 @@ def process_game(sb, game_id):
 
         goals_processed += 1
 
-    return goals_processed
+    return goals_processed, shots_processed
 
 
 def main():
@@ -261,19 +307,23 @@ def main():
               f"processing the remaining {len(games)}.")
 
     total_goals = 0
+    total_shots = 0
     for i, g in enumerate(games, 1):
         try:
-            goals = process_game(sb, g["game_id"])
+            goals, shots = process_game(sb, g["game_id"])
             total_goals += goals
+            total_shots += shots
         except Exception as e:
             print(f"  ! Error on game {g['game_id']}: {e}")
 
         if i % 25 == 0 or i == len(games):
-            print(f"  ...{i}/{len(games)} games processed ({total_goals} goals so far)")
+            print(f"  ...{i}/{len(games)} games processed "
+                  f"({total_goals} goals, {total_shots} shot events so far)")
 
         time.sleep(0.3)
 
-    print(f"\nDone. Processed {len(games)} games, {total_goals} goals total.")
+    print(f"\nDone. Processed {len(games)} games, {total_goals} goals, "
+          f"{total_shots} shot events total.")
 
 
 if __name__ == "__main__":
