@@ -24,6 +24,7 @@ import sys
 import argparse
 import time
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 from supabase import create_client
@@ -196,8 +197,10 @@ def extract_shot_events(payload, game_id, team_abbrev_by_id):
     return rows
 
 
-def process_game(sb, game_id, do_goals=True, do_shots=True):
-    payload = fetch_json(f"{NHL_API_BASE}/gamecenter/{game_id}/play-by-play")
+def process_game(sb, game_id, payload, do_goals=True, do_shots=True):
+    """Extracts and writes goal/shot events from an already-fetched
+    play-by-play payload (fetches are threaded; DB writes stay in the
+    main thread, mirroring pull_nhl_data.py)."""
     if not payload:
         return 0, 0
 
@@ -296,6 +299,8 @@ def main():
     parser.add_argument("--season", type=str, default=None, help="Only process games from this season, e.g. 20252026")
     parser.add_argument("--limit", type=int, default=None, help="Only process the first N games (for testing)")
     parser.add_argument("--force", action="store_true", help="Re-process games even if already done")
+    parser.add_argument("--workers", type=int, default=3,
+                        help="Play-by-play fetches in parallel (default 3 — NHL API rate-limits above this)")
     args = parser.parse_args()
 
     sb = get_supabase_client()
@@ -316,25 +321,31 @@ def main():
 
     total_goals = 0
     total_shots = 0
-    for i, g in enumerate(games, 1):
-        try:
-            goals, shots = process_game(
-                sb, g["game_id"],
-                do_goals=g["game_id"] not in done_goals,
-                do_shots=g["game_id"] not in done_shots,
-            )
-            total_goals += goals
-            total_shots += shots
-        except Exception as e:
-            print(f"  ! Error on game {g['game_id']}: {e}")
+    processed = 0
+    with ThreadPoolExecutor(max_workers=args.workers) as executor:
+        futures = {
+            executor.submit(fetch_json, f"{NHL_API_BASE}/gamecenter/{g['game_id']}/play-by-play"): g
+            for g in games
+        }
+        for future in as_completed(futures):
+            g = futures[future]
+            processed += 1
+            try:
+                goals, shots = process_game(
+                    sb, g["game_id"], future.result(),
+                    do_goals=g["game_id"] not in done_goals,
+                    do_shots=g["game_id"] not in done_shots,
+                )
+                total_goals += goals
+                total_shots += shots
+            except Exception as e:
+                print(f"  ! Error on game {g['game_id']}: {e}")
 
-        if i % 25 == 0 or i == len(games):
-            print(f"  ...{i}/{len(games)} games processed "
-                  f"({total_goals} goals, {total_shots} shots so far)")
+            if processed % 25 == 0 or processed == len(games):
+                print(f"  ...{processed}/{len(games)} games processed "
+                      f"({total_goals} goals, {total_shots} shots so far)")
 
-        time.sleep(0.3)
-
-    print(f"\nDone. Processed {len(games)} games, {total_goals} goals, {total_shots} shots.")
+    print(f"\nDone. Processed {processed} games, {total_goals} goals, {total_shots} shots.")
 
 
 if __name__ == "__main__":
