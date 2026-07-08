@@ -1,0 +1,68 @@
+name: Historical Backfill
+
+# Manually dispatched from the Actions tab (or `gh workflow run backfill.yml`).
+# Runs the full historical chain on GitHub's runners so nobody's laptop has
+# to stay awake: boxscores -> game details -> play-by-play/shots.
+#
+# Every script is idempotent and skips work already in the database, so if a
+# job hits the 6-hour runner limit, just dispatch again — it resumes.
+
+on:
+  workflow_dispatch:
+    inputs:
+      start_date:
+        description: "Backfill start (YYYY-MM-DD)"
+        required: true
+        default: "2018-09-01"
+      end_date:
+        description: "Backfill end (YYYY-MM-DD)"
+        required: true
+        default: "2023-09-30"
+
+jobs:
+  boxscores:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r etl/requirements.txt
+      - name: Boxscore backfill (skips games already in the database)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: >
+          python -u etl/pull_nhl_data.py
+          --start-date ${{ inputs.start_date }}
+          --end-date ${{ inputs.end_date }}
+
+  game-details:
+    needs: boxscores
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r etl/requirements.txt
+      - name: Shifts, officials, attendance (skips games already filled)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python -u etl/backfill_game_details.py
+
+  play-by-play:
+    needs: game-details
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r etl/requirements.txt
+      - name: Game-state + shot locations (skips games already processed)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python -u etl/pull_play_by_play.py
