@@ -202,8 +202,13 @@ def upsert_game(sb, game_json, boxscore_json):
 
 
 def upsert_players_and_stats(sb, game_id, boxscore_json, season=None, game_date=None):
-    """Loops through both teams' player stats in the boxscore payload."""
+    """Collects both teams' player stats from the boxscore payload and
+    writes them as one batched upsert per table — per-row upserts made
+    the DB the bottleneck (~80 HTTP round-trips per game)."""
     player_stats = boxscore_json.get("playerByGameStats", {})
+
+    player_rows = {}   # keyed by player_id: duplicate keys in one upsert payload error out
+    stat_rows = []
 
     for side in ["homeTeam", "awayTeam"]:
         team_id = boxscore_json.get(side, {}).get("abbrev") or boxscore_json.get(side, {}).get("abbreviation")
@@ -215,17 +220,16 @@ def upsert_players_and_stats(sb, game_id, boxscore_json, season=None, game_date=
                 if not player_id:
                     continue
 
-                # Upsert player bio (partial — full bio comes from a separate
+                # Player bio (partial — full bio comes from a separate
                 # /player/{id}/landing call if you want more detail later)
-                db_execute(sb.table("players").upsert({
+                player_rows[player_id] = {
                     "player_id": player_id,
                     "full_name": f"{p.get('name', {}).get('default', '')}".strip() or p.get("name", ""),
                     "position": p.get("position"),
                     "current_team_id": team_id,
-                }), description=f"player {player_id}")
+                }
 
-                # Upsert per-game stats
-                db_execute(sb.table("player_game_stats").upsert({
+                stat_rows.append({
                     "game_id": game_id,
                     "player_id": player_id,
                     "team_id": team_id,
@@ -243,7 +247,14 @@ def upsert_players_and_stats(sb, game_id, boxscore_json, season=None, game_date=
                     "faceoff_wins": int(p.get("faceoffWins", 0) or 0),
                     "faceoff_losses": int(p.get("faceoffLosses", 0) or 0),
                     "toi_seconds": toi_to_seconds(p.get("toi", "0:00")),
-                }, on_conflict="game_id,player_id"), description=f"player_game_stats {game_id}/{player_id}")
+                })
+
+    if player_rows:
+        db_execute(sb.table("players").upsert(list(player_rows.values())),
+                   description=f"players {game_id}")
+    if stat_rows:
+        db_execute(sb.table("player_game_stats").upsert(stat_rows, on_conflict="game_id,player_id"),
+                   description=f"player_game_stats {game_id}")
 
 
 def toi_to_seconds(toi_str):

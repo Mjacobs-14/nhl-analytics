@@ -97,6 +97,12 @@ async function main() {
             teamAbbrev: team,
             position,
             headshotUrl: player.headshot ?? null,
+            // Most rows are first created by the daily boxscore ETL, which
+            // doesn't know these — without them here they'd stay null forever
+            // and the age-curve signal starves.
+            birthDate: player.birthDate ?? landing.birthDate ?? null,
+            sweaterNumber: player.sweaterNumber ?? null,
+            shootsCatches: player.shootsCatches ?? null,
           },
         });
 

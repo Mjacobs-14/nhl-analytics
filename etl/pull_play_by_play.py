@@ -24,6 +24,7 @@ import sys
 import argparse
 import time
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 from supabase import create_client
@@ -139,14 +140,14 @@ def get_games_to_process(sb, season=None, limit=None):
     return games
 
 
-def get_existing_pbp_game_ids(sb):
-    """Games already processed for play-by-play, so reruns skip them."""
+def get_existing_game_ids(sb, table):
+    """Distinct game_ids already present in `table`, so reruns skip them."""
     existing = set()
     page_size = 1000
     offset = 0
     while True:
         result = (
-            sb.table("goal_events")
+            sb.table(table)
             .select("game_id")
             .range(offset, offset + page_size - 1)
             .execute()
@@ -161,10 +162,47 @@ def get_existing_pbp_game_ids(sb):
     return existing
 
 
-def process_game(sb, game_id):
-    payload = fetch_json(f"{NHL_API_BASE}/gamecenter/{game_id}/play-by-play")
+# Unblocked shot attempts (Fenwick). Blocked shots are excluded because
+# their coordinates are the block location, not the shot origin.
+SHOT_EVENT_TYPES = {"goal", "shot-on-goal", "missed-shot"}
+
+
+def extract_shot_events(payload, game_id, team_abbrev_by_id):
+    """Builds shot_events rows from a play-by-play payload."""
+    rows = []
+    for play in payload.get("plays", []):
+        event_type = play.get("typeDescKey")
+        if event_type not in SHOT_EVENT_TYPES:
+            continue
+        details = play.get("details", {}) or {}
+        event_id = play.get("eventId")
+        if event_id is None:
+            continue
+        rows.append({
+            "game_id": game_id,
+            "event_id": event_id,
+            "period": play.get("periodDescriptor", {}).get("number"),
+            "period_type": play.get("periodDescriptor", {}).get("periodType"),
+            "time_in_period": play.get("timeInPeriod"),
+            "team_id": team_abbrev_by_id.get(details.get("eventOwnerTeamId")),
+            "shooter_id": details.get("shootingPlayerId") or details.get("scoringPlayerId"),
+            "goalie_id": details.get("goalieInNetId"),
+            "event_type": event_type,
+            "shot_type": details.get("shotType"),
+            "x_coord": details.get("xCoord"),
+            "y_coord": details.get("yCoord"),
+            "zone_code": details.get("zoneCode"),
+            "situation_code": play.get("situationCode"),
+        })
+    return rows
+
+
+def process_game(sb, game_id, payload, do_goals=True, do_shots=True):
+    """Extracts and writes goal/shot events from an already-fetched
+    play-by-play payload (fetches are threaded; DB writes stay in the
+    main thread, mirroring pull_nhl_data.py)."""
     if not payload:
-        return 0
+        return 0, 0
 
     home_team = payload.get("homeTeam", {})
     away_team = payload.get("awayTeam", {})
@@ -173,7 +211,22 @@ def process_game(sb, game_id):
     home_abbrev = home_team.get("abbrev")
     away_abbrev = away_team.get("abbrev")
 
+    shots_processed = 0
+    if do_shots:
+        shot_rows = extract_shot_events(payload, game_id, {
+            home_numeric_id: home_abbrev,
+            away_numeric_id: away_abbrev,
+        })
+        if shot_rows:
+            db_execute(
+                sb.table("shot_events").upsert(shot_rows, on_conflict="game_id,event_id"),
+                description=f"shot_events {game_id}",
+            )
+        shots_processed = len(shot_rows)
+
     goals_processed = 0
+    if not do_goals:
+        return 0, shots_processed
 
     for play in payload.get("plays", []):
         if play.get("typeDescKey") != "goal":
@@ -238,7 +291,7 @@ def process_game(sb, game_id):
 
         goals_processed += 1
 
-    return goals_processed
+    return goals_processed, shots_processed
 
 
 def main():
@@ -246,6 +299,8 @@ def main():
     parser.add_argument("--season", type=str, default=None, help="Only process games from this season, e.g. 20252026")
     parser.add_argument("--limit", type=int, default=None, help="Only process the first N games (for testing)")
     parser.add_argument("--force", action="store_true", help="Re-process games even if already done")
+    parser.add_argument("--workers", type=int, default=3,
+                        help="Play-by-play fetches in parallel (default 3 — NHL API rate-limits above this)")
     args = parser.parse_args()
 
     sb = get_supabase_client()
@@ -253,27 +308,44 @@ def main():
     games = get_games_to_process(sb, season=args.season, limit=args.limit)
     print(f"Found {len(games)} games in the database.")
 
-    if not args.force:
-        existing_ids = get_existing_pbp_game_ids(sb)
-        before = len(games)
-        games = [g for g in games if g["game_id"] not in existing_ids]
+    # Goals and shots are tracked separately so games processed before
+    # shot_events existed still get their shots extracted on rerun.
+    done_goals = set() if args.force else get_existing_game_ids(sb, "goal_events")
+    done_shots = set() if args.force else get_existing_game_ids(sb, "shot_events")
+    before = len(games)
+    games = [g for g in games
+             if g["game_id"] not in done_goals or g["game_id"] not in done_shots]
+    if before - len(games):
         print(f"  {before - len(games)} already processed — skipping those, "
               f"processing the remaining {len(games)}.")
 
     total_goals = 0
-    for i, g in enumerate(games, 1):
-        try:
-            goals = process_game(sb, g["game_id"])
-            total_goals += goals
-        except Exception as e:
-            print(f"  ! Error on game {g['game_id']}: {e}")
+    total_shots = 0
+    processed = 0
+    with ThreadPoolExecutor(max_workers=args.workers) as executor:
+        futures = {
+            executor.submit(fetch_json, f"{NHL_API_BASE}/gamecenter/{g['game_id']}/play-by-play"): g
+            for g in games
+        }
+        for future in as_completed(futures):
+            g = futures[future]
+            processed += 1
+            try:
+                goals, shots = process_game(
+                    sb, g["game_id"], future.result(),
+                    do_goals=g["game_id"] not in done_goals,
+                    do_shots=g["game_id"] not in done_shots,
+                )
+                total_goals += goals
+                total_shots += shots
+            except Exception as e:
+                print(f"  ! Error on game {g['game_id']}: {e}")
 
-        if i % 25 == 0 or i == len(games):
-            print(f"  ...{i}/{len(games)} games processed ({total_goals} goals so far)")
+            if processed % 25 == 0 or processed == len(games):
+                print(f"  ...{processed}/{len(games)} games processed "
+                      f"({total_goals} goals, {total_shots} shots so far)")
 
-        time.sleep(0.3)
-
-    print(f"\nDone. Processed {len(games)} games, {total_goals} goals total.")
+    print(f"\nDone. Processed {processed} games, {total_goals} goals, {total_shots} shots.")
 
 
 if __name__ == "__main__":

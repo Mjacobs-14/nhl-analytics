@@ -168,12 +168,29 @@ def _to_pct(fraction):
 
 def get_players(sb, limit=None):
     """Pulls player_id + position from the players table already populated
-    by pull_nhl_data.py."""
-    query = sb.table("players").select("player_id, position, full_name")
+    by pull_nhl_data.py. Paged — an unpaginated select silently caps at
+    PostgREST's 1000-row default, which quietly dropped players."""
     if limit:
-        query = query.limit(limit)
-    result = query.execute()
-    return result.data
+        return sb.table("players").select("player_id, position, full_name").limit(limit).execute().data
+
+    players = []
+    page_size = 1000
+    offset = 0
+    while True:
+        rows = (
+            sb.table("players")
+            .select("player_id, position, full_name")
+            .range(offset, offset + page_size - 1)
+            .execute()
+            .data
+        )
+        if not rows:
+            break
+        players.extend(rows)
+        if len(rows) < page_size:
+            break
+        offset += page_size
+    return players
 
 
 def get_existing_edge_keys(sb):
