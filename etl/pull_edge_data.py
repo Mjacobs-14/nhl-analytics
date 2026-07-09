@@ -33,6 +33,7 @@ import sys
 import argparse
 import time
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 from supabase import create_client
@@ -216,16 +217,19 @@ def get_existing_edge_keys(sb):
     return existing
 
 
-def pull_edge_for_player(sb, player, season, game_type_code, game_type_label):
+def fetch_edge_payload(player, season, game_type_code):
+    """Fetch-only half of the pull, safe to run in a worker thread."""
+    player_id = player["player_id"]
+    is_goalie = (player.get("position") == "G")
+    kind = "goalie-detail" if is_goalie else "skater-detail"
+    return fetch_json(f"{NHL_API_BASE}/edge/{kind}/{player_id}/{season}/{game_type_code}")
+
+
+def upsert_edge_row(sb, player, season, game_type_label, payload):
+    """Write half — main thread only, like the other ETLs."""
     player_id = player["player_id"]
     is_goalie = (player.get("position") == "G")
 
-    if is_goalie:
-        url = f"{NHL_API_BASE}/edge/goalie-detail/{player_id}/{season}/{game_type_code}"
-    else:
-        url = f"{NHL_API_BASE}/edge/skater-detail/{player_id}/{season}/{game_type_code}"
-
-    payload = fetch_json(url)
     if not payload:
         return False  # no data for this player/season/game-type combo — common, not an error
 
@@ -254,6 +258,8 @@ def main():
                          help="Only process the first N players (useful for a quick test run)")
     parser.add_argument("--force", action="store_true",
                          help="Re-fetch even if already in the database (default: skip existing)")
+    parser.add_argument("--workers", type=int, default=3,
+                         help="Edge fetches in parallel (default 3 — NHL API rate-limits above this)")
     args = parser.parse_args()
 
     seasons = args.seasons.split(",")
@@ -272,27 +278,31 @@ def main():
 
     for season in seasons:
         for game_type_code, game_type_label in GAME_TYPES.items():
-            print(f"\n=== Season {season} — {game_type_label} ===")
-            for i, player in enumerate(players, 1):
-                key = (player["player_id"], season, game_type_label)
-                if key in existing_keys:
-                    total_skipped_existing += 1
-                else:
+            todo = [p for p in players
+                    if (p["player_id"], season, game_type_label) not in existing_keys]
+            total_skipped_existing += len(players) - len(todo)
+            print(f"\n=== Season {season} — {game_type_label} "
+                  f"({len(todo)} to fetch, {len(players) - len(todo)} already had) ===")
+
+            done = 0
+            with ThreadPoolExecutor(max_workers=args.workers) as executor:
+                futures = {
+                    executor.submit(fetch_edge_payload, p, season, game_type_code): p
+                    for p in todo
+                }
+                for future in as_completed(futures):
+                    player = futures[future]
+                    done += 1
                     try:
-                        got_data = pull_edge_for_player(
-                            sb, player, season, game_type_code, game_type_label
-                        )
-                        if got_data:
+                        if upsert_edge_row(sb, player, season, game_type_label, future.result()):
                             total_pulled += 1
                         else:
                             total_skipped_no_data += 1
                     except Exception as e:
                         print(f"  ! Error on player {player['player_id']} ({player.get('full_name')}): {e}")
 
-                if i % 25 == 0:
-                    print(f"  ...{i}/{len(players)} players processed")
-
-                time.sleep(0.5)  # be polite to the API
+                    if done % 100 == 0 or done == len(todo):
+                        print(f"  ...{done}/{len(todo)} fetched")
 
     print(f"\nDone. Rows pulled: {total_pulled}, "
           f"skipped (no data): {total_skipped_no_data}, "
