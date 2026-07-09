@@ -58,9 +58,14 @@ def _wait_for_cooldown():
 
 
 def _set_cooldown(seconds):
+    # Cap and announce — an uncapped Retry-After once put the whole run
+    # into an invisible hours-long sleep that looked like a hang.
     global _cooldown_until
+    seconds = min(seconds, 120)
     with _cooldown_lock:
         _cooldown_until = max(_cooldown_until, time.time() + seconds)
+    if seconds >= 10:
+        print(f"    ! Rate-limited — cooling down {seconds:.0f}s")
 
 
 def get_supabase_client():
@@ -222,7 +227,11 @@ def fetch_edge_payload(player, season, game_type_code):
     player_id = player["player_id"]
     is_goalie = (player.get("position") == "G")
     kind = "goalie-detail" if is_goalie else "skater-detail"
-    return fetch_json(f"{NHL_API_BASE}/edge/{kind}/{player_id}/{season}/{game_type_code}")
+    payload = fetch_json(f"{NHL_API_BASE}/edge/{kind}/{player_id}/{season}/{game_type_code}")
+    # The edge endpoints rate-limit harder than gamecenter — unpaced
+    # threaded 404 sweeps got the whole run put in the penalty box.
+    time.sleep(0.5)
+    return payload
 
 
 def upsert_edge_row(sb, player, season, game_type_label, payload):
@@ -272,6 +281,16 @@ def main():
     if existing_keys:
         print(f"Found {len(existing_keys)} player/season/game-type combos already pulled — will skip those.")
 
+    # No-data combos aren't in the DB, so without this cache every rerun
+    # re-fetches thousands of 404s before reaching new ground.
+    import json as _json
+    from pathlib import Path as _Path
+    no_data_cache = _Path(__file__).with_name("edge_no_data.json")
+    no_data_keys = set()
+    if not args.force and no_data_cache.exists():
+        no_data_keys = {tuple(k) for k in _json.loads(no_data_cache.read_text())}
+        print(f"Skipping {len(no_data_keys)} combos known to have no data (edge_no_data.json).")
+
     total_pulled = 0
     total_skipped_no_data = 0
     total_skipped_existing = 0
@@ -279,7 +298,8 @@ def main():
     for season in seasons:
         for game_type_code, game_type_label in GAME_TYPES.items():
             todo = [p for p in players
-                    if (p["player_id"], season, game_type_label) not in existing_keys]
+                    if (p["player_id"], season, game_type_label) not in existing_keys
+                    and (p["player_id"], season, game_type_label) not in no_data_keys]
             total_skipped_existing += len(players) - len(todo)
             print(f"\n=== Season {season} — {game_type_label} "
                   f"({len(todo)} to fetch, {len(players) - len(todo)} already had) ===")
@@ -298,11 +318,15 @@ def main():
                             total_pulled += 1
                         else:
                             total_skipped_no_data += 1
+                            no_data_keys.add((player["player_id"], season, game_type_label))
                     except Exception as e:
                         print(f"  ! Error on player {player['player_id']} ({player.get('full_name')}): {e}")
 
                     if done % 100 == 0 or done == len(todo):
                         print(f"  ...{done}/{len(todo)} fetched")
+                        no_data_cache.write_text(_json.dumps(sorted(list(k) for k in no_data_keys)))
+
+            no_data_cache.write_text(_json.dumps(sorted(list(k) for k in no_data_keys)))
 
     print(f"\nDone. Rows pulled: {total_pulled}, "
           f"skipped (no data): {total_skipped_no_data}, "
