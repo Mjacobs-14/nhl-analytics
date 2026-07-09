@@ -12,3 +12,4 @@
 alter table games add column if not exists temp_c        real;  -- daily mean, Celsius
 alter table games add column if not exists precip_mm     real;  -- daily total precipitation
 alter table games add column if not exists snowfall_cm   real;  -- daily total snowfall
+alter table games add column if not exists humidity_pct  real;  -- daily mean relative humidity

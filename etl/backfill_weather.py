@@ -129,7 +129,7 @@ def main():
     page_size = 1000
     offset = 0
     while True:
-        q = sb.table("games").select("game_id, game_date, season, venue, temp_c")
+        q = sb.table("games").select("game_id, game_date, season, venue, temp_c, humidity_pct")
         q = q.range(offset, offset + page_size - 1)
         rows = q.execute().data
         if not rows:
@@ -140,7 +140,7 @@ def main():
         offset += page_size
 
     if not args.force:
-        games = [g for g in games if g["temp_c"] is None]
+        games = [g for g in games if g["temp_c"] is None or g["humidity_pct"] is None]
     games = [g for g in games if g.get("venue") and g.get("game_date")]
     print(f"Stamping weather on {len(games)} games.")
 
@@ -163,17 +163,18 @@ def main():
         data = fetch_json(ARCHIVE_URL, {
             "latitude": coords[0], "longitude": coords[1],
             "start_date": dates[0], "end_date": dates[-1],
-            "daily": "temperature_2m_mean,precipitation_sum,snowfall_sum",
+            "daily": "temperature_2m_mean,precipitation_sum,snowfall_sum,relative_humidity_2m_mean",
             "timezone": "auto",
         })
         daily = (data or {}).get("daily") or {}
         by_date = {
-            d: (t, p, s)
-            for d, t, p, s in zip(
+            d: (t, p, s, h)
+            for d, t, p, s, h in zip(
                 daily.get("time", []),
                 daily.get("temperature_2m_mean", []),
                 daily.get("precipitation_sum", []),
                 daily.get("snowfall_sum", []),
+                daily.get("relative_humidity_2m_mean", []),
             )
         }
         if not by_date:
@@ -187,7 +188,7 @@ def main():
                 continue
             patches.append({
                 "game_id": g["game_id"], "game_date": g["game_date"], "season": g["season"],
-                "temp_c": w[0], "precip_mm": w[1], "snowfall_cm": w[2],
+                "temp_c": w[0], "precip_mm": w[1], "snowfall_cm": w[2], "humidity_pct": w[3],
             })
         if patches:
             sb.table("games").upsert(patches, on_conflict="game_id").execute()
