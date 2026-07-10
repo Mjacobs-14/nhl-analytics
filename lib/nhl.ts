@@ -3,7 +3,14 @@
 
 const BASE = "https://api-web.nhle.com/v1";
 
-export const CURRENT_SEASON = 20252026;
+// Seasons roll over in August: July 2026 is still 20252026, October is 20262027.
+// Computed so nobody has to remember to bump it every fall.
+function currentSeason(): number {
+  const now = new Date();
+  const startYear = now.getMonth() >= 7 ? now.getFullYear() : now.getFullYear() - 1;
+  return startYear * 10000 + (startYear + 1);
+}
+export const CURRENT_SEASON = currentSeason();
 export const REGULAR_SEASON = 2; // gameTypeId
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));

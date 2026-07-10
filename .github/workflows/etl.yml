@@ -27,11 +27,11 @@ jobs:
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: python etl/pull_nhl_data.py
 
-      - name: Run Edge data pull (current season, skips anything already pulled)
+      - name: Run Edge data pull (defaults to the season in progress, skips anything already pulled)
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-        run: python etl/pull_edge_data.py --seasons 20252026
+        run: python etl/pull_edge_data.py
 
       - name: Run play-by-play game-state + shot-location ETL (skips games already processed)
         env:
@@ -50,3 +50,34 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: python etl/backfill_weather.py
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install app dependencies
+        run: npm ci
+
+      - name: Refresh career season totals + rosters (npm run ingest)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: npm run ingest
+
+      - name: Recompute cooked scores (npm run cook)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: npm run cook
+
+      - name: Refresh career regular-vs-playoff table
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          python -c "
+          import os
+          from supabase import create_client
+          sb = create_client(os.environ['SUPABASE_URL'], os.environ['SUPABASE_KEY'])
+          sb.rpc('refresh_player_career_regular_vs_playoff_stats').execute()
+          print('career table refreshed')
+          "

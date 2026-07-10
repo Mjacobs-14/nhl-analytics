@@ -41,7 +41,14 @@ from supabase import create_client
 NHL_API_BASE = "https://api-web.nhle.com/v1"
 GAME_TYPES = {"2": "regular", "3": "playoff"}
 
-DEFAULT_SEASONS = ["20232024", "20242025", "20252026"]
+def _current_season():
+    """Seasons roll over in August: July 2026 is still 20252026."""
+    from datetime import date
+    today = date.today()
+    start = today.year if today.month >= 8 else today.year - 1
+    return f"{start}{start + 1}"
+
+DEFAULT_SEASONS = [_current_season()]  # daily runs track the season in progress
 
 # Shared cooldown — same approach as pull_nhl_data.py: if any request gets
 # rate-limited, every subsequent request waits until the cooldown clears,
