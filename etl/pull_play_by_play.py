@@ -1,22 +1,26 @@
 """
-Game State ETL Pipeline
-=======================
+Game State + Shot Location ETL Pipeline
+========================================
 Pulls play-by-play data for games already in your `games` table and
-derives the score situation (tied, up 1, down 2, etc.) at the moment
-of every goal — something the boxscore data can't tell you, since it
-only has final totals.
+derives (1) the score situation (tied, up 1, down 2, etc.) at the
+moment of every goal, and (2) a row per shot attempt (Corsi) with the
+shooter's release coordinates, shot type, and strength state.
 
 Reuses the same resilience patterns as pull_nhl_data.py: shared
 rate-limit cooldown, network-error retries, DB write retries, and
 skip-existing on rerun.
 
-SETUP: run sql/007_game_state_schema.sql in Supabase first. Same
-SUPABASE_URL / SUPABASE_KEY env vars as the other scripts.
+SETUP: run sql/007_game_state_schema.sql and sql/010_shot_events_and_game_details.sql
+in Supabase first. Same SUPABASE_URL / SUPABASE_KEY env vars as the
+other scripts.
 
 USAGE:
     python pull_play_by_play.py                       # all games in DB
     python pull_play_by_play.py --season 20252026      # just one season
     python pull_play_by_play.py --limit 20             # quick test
+    python pull_play_by_play.py --refresh-shots        # re-extract shots for
+                                                       # every game (e.g. to
+                                                       # backfill blocked shots)
 """
 
 import os
@@ -162,9 +166,12 @@ def get_existing_game_ids(sb, table):
     return existing
 
 
-# Unblocked shot attempts (Fenwick). Blocked shots are excluded because
-# their coordinates are the block location, not the shot origin.
-SHOT_EVENT_TYPES = {"goal", "shot-on-goal", "missed-shot"}
+# All shot attempts (Corsi). shot-on-goal / missed-shot / goal carry the
+# shooter's release coordinates; blocked-shot is included too (so Corsi and
+# shot-suppression counts work), but its x/y/zone are nulled below because
+# the API reports the *block* location, not the shot origin — keeping them
+# would poison any coordinate- or distance-based metric (e.g. xG).
+SHOT_EVENT_TYPES = {"goal", "shot-on-goal", "missed-shot", "blocked-shot"}
 
 
 def extract_shot_events(payload, game_id, team_abbrev_by_id):
@@ -178,6 +185,11 @@ def extract_shot_events(payload, game_id, team_abbrev_by_id):
         event_id = play.get("eventId")
         if event_id is None:
             continue
+        # Blocked-shot coordinates are where the block happened, not where
+        # the shot was taken — null them so they don't masquerade as shot
+        # locations. The row still counts as a shot attempt (Corsi), with
+        # the shooter and team preserved.
+        is_blocked = event_type == "blocked-shot"
         rows.append({
             "game_id": game_id,
             "event_id": event_id,
@@ -189,9 +201,9 @@ def extract_shot_events(payload, game_id, team_abbrev_by_id):
             "goalie_id": details.get("goalieInNetId"),
             "event_type": event_type,
             "shot_type": details.get("shotType"),
-            "x_coord": details.get("xCoord"),
-            "y_coord": details.get("yCoord"),
-            "zone_code": details.get("zoneCode"),
+            "x_coord": None if is_blocked else details.get("xCoord"),
+            "y_coord": None if is_blocked else details.get("yCoord"),
+            "zone_code": None if is_blocked else details.get("zoneCode"),
             "situation_code": play.get("situationCode"),
         })
     return rows
@@ -299,6 +311,10 @@ def main():
     parser.add_argument("--season", type=str, default=None, help="Only process games from this season, e.g. 20252026")
     parser.add_argument("--limit", type=int, default=None, help="Only process the first N games (for testing)")
     parser.add_argument("--force", action="store_true", help="Re-process games even if already done")
+    parser.add_argument("--refresh-shots", action="store_true",
+                        help="Re-extract shots for every game even if already done (goals still skip "
+                             "already-done games). Use to backfill after shot-extraction logic changes, "
+                             "e.g. adding blocked shots — upserts are idempotent, so existing rows are unharmed.")
     parser.add_argument("--workers", type=int, default=3,
                         help="Play-by-play fetches in parallel (default 3 — NHL API rate-limits above this)")
     args = parser.parse_args()
@@ -311,7 +327,7 @@ def main():
     # Goals and shots are tracked separately so games processed before
     # shot_events existed still get their shots extracted on rerun.
     done_goals = set() if args.force else get_existing_game_ids(sb, "goal_events")
-    done_shots = set() if args.force else get_existing_game_ids(sb, "shot_events")
+    done_shots = set() if (args.force or args.refresh_shots) else get_existing_game_ids(sb, "shot_events")
     before = len(games)
     games = [g for g in games
              if g["game_id"] not in done_goals or g["game_id"] not in done_shots]
