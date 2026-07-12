@@ -144,18 +144,23 @@ def get_games_to_process(sb, season=None, limit=None):
     return games
 
 
-def get_existing_game_ids(sb, table):
-    """Distinct game_ids already present in `table`, so reruns skip them."""
+def get_existing_game_ids(sb, table, event_type=None):
+    """Distinct game_ids already present in `table`, so reruns skip them.
+
+    If event_type is given, only games with at least one row of that type
+    count as done — used to resume a `--refresh-shots` pass: the original
+    Fenwick backfill left every game with shot rows but zero blocked-shot
+    rows, so filtering on event_type='blocked-shot' cleanly marks which
+    games a prior refresh already reached.
+    """
     existing = set()
     page_size = 1000
     offset = 0
     while True:
-        result = (
-            sb.table(table)
-            .select("game_id")
-            .range(offset, offset + page_size - 1)
-            .execute()
-        )
+        query = sb.table(table).select("game_id")
+        if event_type is not None:
+            query = query.eq("event_type", event_type)
+        result = query.range(offset, offset + page_size - 1).execute()
         rows = result.data
         if not rows:
             break
@@ -312,9 +317,10 @@ def main():
     parser.add_argument("--limit", type=int, default=None, help="Only process the first N games (for testing)")
     parser.add_argument("--force", action="store_true", help="Re-process games even if already done")
     parser.add_argument("--refresh-shots", action="store_true",
-                        help="Re-extract shots for every game even if already done (goals still skip "
-                             "already-done games). Use to backfill after shot-extraction logic changes, "
-                             "e.g. adding blocked shots — upserts are idempotent, so existing rows are unharmed.")
+                        help="Backfill blocked shots into games that predate blocked-shot capture "
+                             "(goals still skip already-done games). Resume-aware: games that already "
+                             "have blocked-shot rows are skipped, so an interrupted run picks up where "
+                             "it left off. Upserts are idempotent, so existing rows are unharmed.")
     parser.add_argument("--workers", type=int, default=3,
                         help="Play-by-play fetches in parallel (default 3 — NHL API rate-limits above this)")
     args = parser.parse_args()
@@ -327,7 +333,15 @@ def main():
     # Goals and shots are tracked separately so games processed before
     # shot_events existed still get their shots extracted on rerun.
     done_goals = set() if args.force else get_existing_game_ids(sb, "goal_events")
-    done_shots = set() if (args.force or args.refresh_shots) else get_existing_game_ids(sb, "shot_events")
+    if args.force:
+        done_shots = set()
+    elif args.refresh_shots:
+        # Resume-aware refresh: skip games that already have blocked-shot
+        # rows (a prior refresh pass reached them) so an interrupted run
+        # picks up where it left off instead of re-fetching every game.
+        done_shots = get_existing_game_ids(sb, "shot_events", event_type="blocked-shot")
+    else:
+        done_shots = get_existing_game_ids(sb, "shot_events")
     before = len(games)
     games = [g for g in games
              if g["game_id"] not in done_goals or g["game_id"] not in done_shots]
