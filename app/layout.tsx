@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { Suspense } from "react";
 import { Barlow, Barlow_Condensed, IBM_Plex_Mono } from "next/font/google";
+import { NavBar } from "@/components/NavBar";
 import "./globals.css";
 
 const display = Barlow_Condensed({
@@ -44,6 +46,9 @@ export default function RootLayout({
             NHL player decline detection. For arguments in the group chat, not
             for wagering.
           </p>
+          <Suspense>
+            <NavBar />
+          </Suspense>
         </header>
         <hr className="center-line max-w-5xl w-full mx-auto" />
         <main className="px-6 py-6 max-w-5xl w-full mx-auto flex-1">
