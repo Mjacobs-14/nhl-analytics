@@ -144,14 +144,15 @@ def get_games_to_process(sb, season=None, limit=None):
     return games
 
 
-def get_existing_game_ids(sb, table, event_type=None):
+def get_existing_game_ids(sb, table, event_type=None, not_null=None):
     """Distinct game_ids already present in `table`, so reruns skip them.
 
-    If event_type is given, only games with at least one row of that type
-    count as done — used to resume a `--refresh-shots` pass: the original
-    Fenwick backfill left every game with shot rows but zero blocked-shot
-    rows, so filtering on event_type='blocked-shot' cleanly marks which
-    games a prior refresh already reached.
+    If not_null is given, only games with at least one row where that column
+    is set count as done — used to resume a `--refresh-shots` pass after a
+    shot-extraction change adds a column: games processed by the new code
+    have it populated, so it cleanly marks which games a prior refresh
+    reached. (Currently `is_rush`; before that it was event_type='blocked-shot'
+    via the event_type filter.)
     """
     existing = set()
     page_size = 1000
@@ -160,6 +161,8 @@ def get_existing_game_ids(sb, table, event_type=None):
         query = sb.table(table).select("game_id")
         if event_type is not None:
             query = query.eq("event_type", event_type)
+        if not_null is not None:
+            query = query.not_.is_(not_null, "null")
         result = query.range(offset, offset + page_size - 1).execute()
         rows = result.data
         if not rows:
@@ -178,39 +181,74 @@ def get_existing_game_ids(sb, table, event_type=None):
 # would poison any coordinate- or distance-based metric (e.g. xG).
 SHOT_EVENT_TYPES = {"goal", "shot-on-goal", "missed-shot", "blocked-shot"}
 
+# Rush proxy: a shot is "off the rush" when it comes within RUSH_MAX_GAP_SEC
+# of the previous play, that play was in the neutral or defensive zone
+# (puck moving up-ice), and it wasn't a whistle/draw (those are set plays,
+# not transition). No possession tracking, so this is a heuristic, not truth.
+RUSH_MAX_GAP_SEC = 5
+_RUSH_PRIOR_ZONES = {"N", "D"}
+_NON_RUSH_PRIOR_TYPES = {"faceoff", "stoppage", "period-start", "period-end", "game-end"}
+
+
+def _time_in_period_to_sec(t):
+    if not t:
+        return None
+    try:
+        m, s = t.split(":")
+        return int(m) * 60 + int(s)
+    except (ValueError, AttributeError):
+        return None
+
+
+def _is_rush(shot_play, prev_play):
+    """Whether shot_play looks like a rush shot given the play before it."""
+    if not prev_play:
+        return False
+    if prev_play.get("typeDescKey") in _NON_RUSH_PRIOR_TYPES:
+        return False
+    if shot_play.get("periodDescriptor", {}).get("number") != \
+       prev_play.get("periodDescriptor", {}).get("number"):
+        return False
+    st = _time_in_period_to_sec(shot_play.get("timeInPeriod"))
+    pt = _time_in_period_to_sec(prev_play.get("timeInPeriod"))
+    if st is None or pt is None or not (0 <= st - pt <= RUSH_MAX_GAP_SEC):
+        return False
+    return (prev_play.get("details") or {}).get("zoneCode") in _RUSH_PRIOR_ZONES
+
 
 def extract_shot_events(payload, game_id, team_abbrev_by_id):
     """Builds shot_events rows from a play-by-play payload."""
     rows = []
+    prev_play = None
     for play in payload.get("plays", []):
         event_type = play.get("typeDescKey")
-        if event_type not in SHOT_EVENT_TYPES:
-            continue
-        details = play.get("details", {}) or {}
-        event_id = play.get("eventId")
-        if event_id is None:
-            continue
-        # Blocked-shot coordinates are where the block happened, not where
-        # the shot was taken — null them so they don't masquerade as shot
-        # locations. The row still counts as a shot attempt (Corsi), with
-        # the shooter and team preserved.
-        is_blocked = event_type == "blocked-shot"
-        rows.append({
-            "game_id": game_id,
-            "event_id": event_id,
-            "period": play.get("periodDescriptor", {}).get("number"),
-            "period_type": play.get("periodDescriptor", {}).get("periodType"),
-            "time_in_period": play.get("timeInPeriod"),
-            "team_id": team_abbrev_by_id.get(details.get("eventOwnerTeamId")),
-            "shooter_id": details.get("shootingPlayerId") or details.get("scoringPlayerId"),
-            "goalie_id": details.get("goalieInNetId"),
-            "event_type": event_type,
-            "shot_type": details.get("shotType"),
-            "x_coord": None if is_blocked else details.get("xCoord"),
-            "y_coord": None if is_blocked else details.get("yCoord"),
-            "zone_code": None if is_blocked else details.get("zoneCode"),
-            "situation_code": play.get("situationCode"),
-        })
+        if event_type in SHOT_EVENT_TYPES:
+            details = play.get("details", {}) or {}
+            event_id = play.get("eventId")
+            if event_id is not None:
+                # Blocked-shot coordinates are where the block happened, not
+                # where the shot was taken — null them so they don't
+                # masquerade as shot locations. The row still counts as a
+                # shot attempt (Corsi), with the shooter and team preserved.
+                is_blocked = event_type == "blocked-shot"
+                rows.append({
+                    "game_id": game_id,
+                    "event_id": event_id,
+                    "period": play.get("periodDescriptor", {}).get("number"),
+                    "period_type": play.get("periodDescriptor", {}).get("periodType"),
+                    "time_in_period": play.get("timeInPeriod"),
+                    "team_id": team_abbrev_by_id.get(details.get("eventOwnerTeamId")),
+                    "shooter_id": details.get("shootingPlayerId") or details.get("scoringPlayerId"),
+                    "goalie_id": details.get("goalieInNetId"),
+                    "event_type": event_type,
+                    "shot_type": details.get("shotType"),
+                    "x_coord": None if is_blocked else details.get("xCoord"),
+                    "y_coord": None if is_blocked else details.get("yCoord"),
+                    "zone_code": None if is_blocked else details.get("zoneCode"),
+                    "situation_code": play.get("situationCode"),
+                    "is_rush": _is_rush(play, prev_play),
+                })
+        prev_play = play
     return rows
 
 
@@ -317,10 +355,11 @@ def main():
     parser.add_argument("--limit", type=int, default=None, help="Only process the first N games (for testing)")
     parser.add_argument("--force", action="store_true", help="Re-process games even if already done")
     parser.add_argument("--refresh-shots", action="store_true",
-                        help="Backfill blocked shots into games that predate blocked-shot capture "
-                             "(goals still skip already-done games). Resume-aware: games that already "
-                             "have blocked-shot rows are skipped, so an interrupted run picks up where "
-                             "it left off. Upserts are idempotent, so existing rows are unharmed.")
+                        help="Re-extract shots for games that predate the current shot logic "
+                             "(goals still skip already-done games). Resume-aware: games whose "
+                             "shot rows already have is_rush set are skipped, so an interrupted run "
+                             "picks up where it left off. Upserts are idempotent, so existing rows "
+                             "are unharmed.")
     parser.add_argument("--workers", type=int, default=3,
                         help="Play-by-play fetches in parallel (default 3 — NHL API rate-limits above this)")
     args = parser.parse_args()
@@ -336,10 +375,10 @@ def main():
     if args.force:
         done_shots = set()
     elif args.refresh_shots:
-        # Resume-aware refresh: skip games that already have blocked-shot
-        # rows (a prior refresh pass reached them) so an interrupted run
-        # picks up where it left off instead of re-fetching every game.
-        done_shots = get_existing_game_ids(sb, "shot_events", event_type="blocked-shot")
+        # Resume-aware refresh: skip games whose shot rows already have
+        # is_rush set (the current shot logic reached them) so an interrupted
+        # run picks up where it left off instead of re-fetching every game.
+        done_shots = get_existing_game_ids(sb, "shot_events", not_null="is_rush")
     else:
         done_shots = get_existing_game_ids(sb, "shot_events")
     before = len(games)
