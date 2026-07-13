@@ -238,7 +238,9 @@ def upsert_players_and_stats(sb, game_id, boxscore_json, season=None, game_date=
                     "position": p.get("position"),
                     "goals": p.get("goals", 0),
                     "assists": p.get("assists", 0),
-                    "shots": p.get("shots", 0),
+                    # The boxscore API names shots-on-goal "sog" — reading
+                    # "shots" here left the column zero for 452k rows.
+                    "shots": p.get("sog", 0),
                     "hits": p.get("hits", 0),
                     "blocked_shots": p.get("blockedShots", 0),
                     "penalty_minutes": p.get("pim", 0),
