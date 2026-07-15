@@ -18,7 +18,7 @@ light/dark theming.
 | `edge_athleticism.html` | NHL Edge skating — top speed vs bursts / distance | `player_athleticism_v` |
 | `clutch.html` | Game-state scoring — clutch tilt vs production, per-player state fingerprints | `player_clutch_v` |
 | `goalie_hot_hand.html` | Goalie streakiness vs quality, with click-to-open hot/cold start timelines | `goalie_streak_v`, `goalie_game_v` |
-| `matchup_lab.html` | Two-team style-clash previews: attack mixes × concession profiles × goalie band SV%, priced in expected goals | `team_shot_location_v`, `goalie_location_v` |
+| `matchup_lab.html` | Two-team style-clash previews: road-vs-home attack mixes × concession profiles × goalie band SV% (with starter override), priced in expected goals | `team_shot_location_v`, `goalie_location_v` |
 
 **Snapshot date:** 2026-07-14 (8 seasons, 2018–2026; Edge 2021–2026).
 
