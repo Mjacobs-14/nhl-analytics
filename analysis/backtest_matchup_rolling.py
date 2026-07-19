@@ -234,7 +234,7 @@ def run_static(glist, prev, final, lg, leaky):
 
 def run_rolling(glist, prev, final, lg, G, K, use_goalie):
     cur={}; cgo={}; cseason=None
-    probs=[]; margins=[]; buckets={}
+    probs=[]; margins=[]; buckets={}; records=[]
     for g in glist:
         S=g["season"]
         if S!=cseason: cur={}; cgo={}; cseason=S
@@ -264,11 +264,13 @@ def run_rolling(glist, prev, final, lg, G, K, use_goalie):
             probs.append((P,g["_hw"])); margins.append((lhg-lag,g["_margin"]))
             m=min(n_h,n_a); b=0 if m<10 else 1 if m<20 else 2 if m<40 else 3
             bk=buckets.setdefault(b,[0,0]); bk[0]+= 1 if (P>0.5)==(g["_hw"]==1) else 0; bk[1]+=1
+            records.append((g["home"]["game_id"], S, g["home"]["team"], g["road"]["team"],
+                            round(P,4), g["_hw"], m))
         cur.setdefault((H["team"],"home"), new_acc()); fold(cur[(H["team"],"home")], H)
         cur.setdefault((A["team"],"road"), new_acc()); fold(cur[(A["team"],"road")], A)
         for r in G["by_game"].get(g["home"]["game_id"], []):
             a=cgo.setdefault(r["goalie_id"], [0,0,0.0]); a[0]+=r["shots"]; a[1]+=r["ga"]; a[2]+=r["xga"] or 0
-    return metrics(probs,margins), probs, buckets
+    return metrics(probs,margins), probs, buckets, records
 
 BUCKET={0:"each team's games 0-9 (October)",1:"games 10-19",
         2:"games 20-39 (mid-season)",3:"games 40+ (2nd half)"}
@@ -283,6 +285,8 @@ def main():
     ap=argparse.ArgumentParser()
     ap.add_argument("--snapshot"); ap.add_argument("--write-snapshot")
     ap.add_argument("--K", type=int, default=None, help="fix shrinkage weight; default sweeps")
+    ap.add_argument("--emit-predictions", help="write per-game rolling+goalie predictions to CSV "
+                    "(game_id,season,home,away,p_home,home_win,maturity) for score_vs_odds.py")
     args=ap.parse_args()
     data=get_data(args)
     glist, prev, final, lg, G = build(data)
@@ -300,12 +304,18 @@ def main():
     Ks=[args.K] if args.K else [10,15,20,25,30,40,60]
     best=None
     for K in Ks:
-        mr,_,_=run_rolling(glist,prev,final,lg,G,K,use_goalie=False)
+        mr,_,_,_=run_rolling(glist,prev,final,lg,G,K,use_goalie=False)
         print(f"  K={K:>3}  acc={mr['acc']:.4f}  logloss={mr['ll']:.4f}  brier={mr['brier']:.4f}")
         if best is None or mr["ll"]<best[0]: best=(mr["ll"],K)
     K=best[1]
-    mcore,_,_=run_rolling(glist,prev,final,lg,G,K,use_goalie=False)
-    mg,pr,bk=run_rolling(glist,prev,final,lg,G,K,use_goalie=True)
+    mcore,_,_,_=run_rolling(glist,prev,final,lg,G,K,use_goalie=False)
+    mg,pr,bk,records=run_rolling(glist,prev,final,lg,G,K,use_goalie=True)
+    if args.emit_predictions:
+        import csv
+        with open(args.emit_predictions,"w",newline="",encoding="utf-8") as f:
+            w=csv.writer(f); w.writerow(["game_id","season","home","away","p_home","home_win","maturity"])
+            w.writerows(records)
+        print(f"\nwrote {len(records)} predictions -> {args.emit_predictions}")
     print(f"\nBEST ROLLING  K={K}")
     report(mcore, "rolling xG core")
     report(mg,    "rolling + starting goalie")

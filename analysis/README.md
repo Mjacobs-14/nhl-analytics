@@ -102,9 +102,17 @@ our market. Don't revisit totals without a fundamentally different model.
 
 | Feature | Effect on rolling | Verdict |
 |---|---|---|
-| **Starting-goalie identity** (#4) | acc 58.0→58.9%, log-loss 0.673→0.671, best late-season (59→63%) | **Adopted** |
-| Opponent / strength-of-schedule adjustment (#1) | wash-to-negative; even the maturity-gentled version was a tie | Rejected |
+| **Starting-goalie identity** | acc 58.0→58.9%, log-loss 0.673→0.671, best late-season (59→63%) | **Adopted** |
+| Opponent / strength-of-schedule adjustment | wash-to-negative; even the maturity-gentled version was a tie | Rejected |
 | Coach-style **clash** | style-clash interactions correlate ~0.00 with model residuals, even in-sample | Rejected |
+| EV/PP special-teams split | acc/log-loss unchanged to 4 dp — special teams already sit in the total-xG rate | Rejected |
+| Corsi / possession blend | +0.1pt acc, log-loss flat — inside the noise (xG already dominates Corsi) | Rejected |
+
+**The model has plateaued at ~58.9% out-of-sample.** Starting goalie was the
+only feature that moved it; four sensible refinements since have all come back
+null. More gain likely needs *different information*, not more processing of the
+same shot data. Best untested idea: **rest / back-to-backs / travel** — proven
+market signal, and we already have game dates + `etl/venue_coords.json`.
 
 - **Starting goalie:** replaces the defending *team*'s pooled finish factor with
   the actual *starter*'s GA/xGA, shots-shrunk (league 1.0 + prior season +
@@ -120,10 +128,30 @@ our market. Don't revisit totals without a fundamentally different model.
   Side-note: the defensive shot-volume signal hints a **possession/Corsi term**
   (the model is pure-xG and ignores raw shot volume) could be a small feature.
 
+## `score_vs_odds.py` — the edge test (harness ready, needs odds data)
+
+Winning-pick accuracy only beats a coin flip; the question that matters is
+whether the model beats the **closing line** (~52.4% break-even at −110). This
+scorer answers it — devigs closing moneylines, bets where model prob − market
+prob > `--edge`, and reports ROI (flat or quarter-Kelly), closing-line value,
+and breakdowns by favorite/underdog and season maturity.
+
+```
+python backtest_matchup_rolling.py --emit-predictions preds.csv   # model side
+python score_vs_odds.py --preds preds.csv --odds odds.csv          # + market
+python score_vs_odds.py --self-test                               # validate the math
+```
+
+**Blocker: we have no historical closing odds in the DB.** The harness is built
+and its math is validated (`--self-test`: fair market → −vig; sharper model →
+positive ROI), but the real answer waits on an odds source keyed to NHL gamePk
+(see the module docstring for schema + candidate sources). Nothing is pulled
+automatically — supply the CSV.
+
 ### Next
 
-1. **Score vs. historical closing odds** — the definitive edge test (needs an
-   odds dataset not yet in the DB). Underdog mid-season picks, where calibration
-   is strongest, are the place to look.
-2. **Fold in the EV/PP special-teams split** and re-run rolling.
-3. **Try a possession/Corsi term** (small, from the coach-probe side-finding).
+1. **Get a historical closing-odds dataset** (external) and run `score_vs_odds`.
+   This is the only thing that answers "is there money here." Underdog / mature
+   (≥20 gp) games, where calibration is strongest, are where to look first.
+2. **Rest / back-to-backs / travel features** — the most promising untested
+   signal, data already in hand.
