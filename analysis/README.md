@@ -163,14 +163,44 @@ weakest there. The "underdog value" and "mature-game" hypotheses are falsified.
 winner-picker — and it has **no exploitable straight-moneyline edge** in
 2019-2023. Not bettable as-is.
 
+## Rest / back-to-backs / travel — a real market bias, not yet a bankable edge
+
+`fatigue_market_test.py` asks whether the *market* under-prices fatigue (not just
+whether it affects games). Unlike the model — which was priced-in everywhere —
+fatigue shows the **first genuine crack in market efficiency**:
+
+| Back-to-back situation | n | actual home-win | market-implied | gap |
+|---|---|---|---|---|
+| neither on b2b | 3,509 | 0.535 | 0.541 | −0.005 (priced) |
+| away on b2b only | 710 | 0.583 | 0.564 | +0.019 (small) |
+| **home on b2b only** | **227** | **0.419** | **0.500** | **−0.081** |
+| both on b2b | 305 | 0.505 | 0.523 | −0.018 |
+
+**The book over-prices tired home teams:** on a back-to-back they win 41.9% but
+are lined at 50.0% — the market over-weights home ice and under-adjusts for
+fatigue. Fading the tired team returned **+4.3% ROI over 937 bets** vs the close.
+
+**But it is not yet a bankable edge:**
+- Season-unstable: per-season ROI was +1.6%, **−4.0%**, +26% (COVID bubble,
+  n=66, unrepresentative), +11%, **−8.3%** — 2 of 5 seasons negative, and the
+  aggregate leans on the empty-arena COVID season.
+- The larger leg (away-tired → bet home, 710 bets) is only +1.9% ROI — inside
+  the noise; essentially priced. The real signal is the smaller "fade tired
+  home teams" leg (227 bets, ~1.8σ vs the market).
+- Rest-differential, travel distance, and 3-in-4 congestion showed **no** edge
+  (all priced or noise).
+
+Verdict: a real, directionally-sensible bias worth pursuing — the market
+under-prices home-team back-to-back fatigue — but the sample is too thin and
+season-to-season too inconsistent to bet on. It points somewhere real.
+
 ### Next
 
-Straight pre-game moneyline is efficient; beating it needs information the market
-prices slowly or not at all. Candidates, roughly in order:
-
-1. **Rest / back-to-backs / travel** — proven soft spot, data already in hand
-   (game dates + `etl/venue_coords.json`). Test whether the *market* under-prices
-   fatigue, not just whether the model predicts it.
-2. **Live / in-game** models (different market, less efficient) — a bigger build.
-3. **Extend odds coverage** to 2023-26 (SBR stops at 2022-23) to confirm the
-   verdict holds on recent seasons before abandoning moneyline entirely.
+1. **Extend odds to 2023-26** (SBR stops at 2022-23; other free/paid sources
+   exist) — the "fade tired home teams" bias needs more out-of-sample b2b games
+   to confirm before risking money. This is the make-or-break test.
+2. **Forward paper-trade** the fade-tired-home-team rule this season rather than
+   declaring victory on backtest P&L.
+3. If neither confirms, the model is an **analytics/content asset**, not a
+   betting engine — a legitimately good calibrated predictor, just not a
+   market-beater.
