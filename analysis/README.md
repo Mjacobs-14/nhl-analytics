@@ -128,30 +128,49 @@ market signal, and we already have game dates + `etl/venue_coords.json`.
   Side-note: the defensive shot-volume signal hints a **possession/Corsi term**
   (the model is pure-xG and ignores raw shot volume) could be a small feature.
 
-## `score_vs_odds.py` — the edge test (harness ready, needs odds data)
+## The edge test vs. closing odds — RESULT (2026-07): no edge
 
-Winning-pick accuracy only beats a coin flip; the question that matters is
-whether the model beats the **closing line** (~52.4% break-even at −110). This
-scorer answers it — devigs closing moneylines, bets where model prob − market
-prob > `--edge`, and reports ROI (flat or quarter-Kelly), closing-line value,
-and breakdowns by favorite/underdog and season maturity.
+`score_vs_odds.py` devigs closing moneylines, bets where model prob − market
+prob > `--edge`, and reports ROI, closing-line value, and favorite/underdog/
+maturity breakdowns. `fetch_sbr_odds.py` pulls the closing lines from Sportsbook
+Reviews Online (free archive, 2018-19 .. 2022-23) and maps them to gamePk.
 
 ```
-python backtest_matchup_rolling.py --emit-predictions preds.csv   # model side
-python score_vs_odds.py --preds preds.csv --odds odds.csv          # + market
-python score_vs_odds.py --self-test                               # validate the math
+python fetch_sbr_odds.py --out odds.csv                            # scrape + map odds
+python backtest_matchup_rolling.py --emit-predictions preds.csv    # model side
+python score_vs_odds.py --preds preds.csv --odds odds.csv          # score it
+python score_vs_odds.py --self-test                                # validate the math
 ```
 
-**Blocker: we have no historical closing odds in the DB.** The harness is built
-and its math is validated (`--self-test`: fair market → −vig; sharper model →
-positive ROI), but the real answer waits on an odds source keyed to NHL gamePk
-(see the module docstring for schema + candidate sources). Nothing is pulled
-automatically — supply the CSV.
+**Verdict: the model does NOT beat the market.** 4 out-of-sample seasons
+(2019-20 .. 2022-23), 3,497 games matched to closing lines:
+
+| Bet filter | Bets | Win % | ROI |
+|---|---|---|---|
+| model edge ≥3% (flat) | 2,376 | 44.1% | **−2.4%** |
+| model edge ≥5% (flat) | 1,662 | 43.1% | **−2.0%** |
+| model edge ≥2% (¼-Kelly) | 2,731 | 44.4% | **−1.7%** |
+
+Every configuration loses ~the vig. The model's apparent CLV (+0.077) is an
+illusion — when it disagrees with the close, the close is usually right. The
+decisive cut is maturity: **the mature-game segment (≥20 gp), where the model's
+winner-pick skill peaks at 60%, is the WORST betting segment (−7% ROI).** Its
+skill is entirely priced in. Favorites ≈ breakeven; underdogs negative; the only
+non-negative slice is early-season (<20 gp), but that's noise and the model is
+weakest there. The "underdog value" and "mature-game" hypotheses are falsified.
+
+**Bottom line for monetization:** 58.9% is a genuinely skilled, well-calibrated
+winner-picker — and it has **no exploitable straight-moneyline edge** in
+2019-2023. Not bettable as-is.
 
 ### Next
 
-1. **Get a historical closing-odds dataset** (external) and run `score_vs_odds`.
-   This is the only thing that answers "is there money here." Underdog / mature
-   (≥20 gp) games, where calibration is strongest, are where to look first.
-2. **Rest / back-to-backs / travel features** — the most promising untested
-   signal, data already in hand.
+Straight pre-game moneyline is efficient; beating it needs information the market
+prices slowly or not at all. Candidates, roughly in order:
+
+1. **Rest / back-to-backs / travel** — proven soft spot, data already in hand
+   (game dates + `etl/venue_coords.json`). Test whether the *market* under-prices
+   fatigue, not just whether the model predicts it.
+2. **Live / in-game** models (different market, less efficient) — a bigger build.
+3. **Extend odds coverage** to 2023-26 (SBR stops at 2022-23) to confirm the
+   verdict holds on recent seasons before abandoning moneyline entirely.
