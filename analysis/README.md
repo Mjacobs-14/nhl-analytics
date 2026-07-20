@@ -194,13 +194,36 @@ Verdict: a real, directionally-sensible bias worth pursuing — the market
 under-prices home-team back-to-back fatigue — but the sample is too thin and
 season-to-season too inconsistent to bet on. It points somewhere real.
 
-### Next
+### The effect is fading (free robustness check, our own data)
 
-1. **Extend odds to 2023-26** (SBR stops at 2022-23; other free/paid sources
-   exist) — the "fade tired home teams" bias needs more out-of-sample b2b games
-   to confirm before risking money. This is the make-or-break test.
-2. **Forward paper-trade** the fade-tired-home-team rule this season rather than
-   declaring victory on backtest P&L.
-3. If neither confirms, the model is an **analytics/content asset**, not a
-   betting engine — a legitimately good calibrated predictor, just not a
-   market-beater.
+Before buying recent odds, we tested whether the *raw* home-b2b effect even
+persists — it needs only schedule + outcomes, which we have for all 8 seasons:
+
+| Era | home-b2b games | home win % |
+|---|---|---|
+| 2018–2023 (where the edge showed) | 283 | **41.3%** |
+| 2023–2026 (the seasons we'd pay for) | 217 | **48.8%** |
+
+2025-26 (complete) shows **53.9%** — no effect; tired home teams now win at their
+normal home rate. The signal that powered the +4.3% ROI has decayed toward league
+average (likely league-wide load-management + market adjustment). So buying
+2023-26 closing odds would most likely just confirm the edge has closed. **Don't
+spend on odds.**
+
+### Odds sources surveyed (for the record)
+
+| Source | Recent seasons | Closing ML? | Cost | Verdict |
+|---|---|---|---|---|
+| Sportsbook Reviews Online | no (stops 2022-23) | yes | free | already used |
+| checkbestodds.com | 2023-26 | **no** (best/3-way) | free | biases ROII up; unfit |
+| Scottfree Analytics CSV | unconfirmed | yes | $69 one-time | clean but coverage unconfirmed |
+| The Odds API | from late-2020 | snapshot≈close | usage-priced | programmatic; snapshot proxy |
+
+### Conclusion of the monetization investigation
+
+The model is a genuinely skilled, well-calibrated **58.9% winner-picker with no
+straight-moneyline edge** — its skill is priced in. The one market inefficiency
+we found (tired home teams) was real in 2018-2023 but has **faded** in recent
+seasons. Net: **treat this as an analytics / content asset, not a betting
+engine.** If still curious, forward paper-trade the fade-tired-home rule at zero
+cost rather than paying for data on a signal that's already decaying.
