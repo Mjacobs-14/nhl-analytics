@@ -41,6 +41,7 @@ and diffing against the committed page:
 | `shot_quadrants.html` | `build_quadrants.py` | **byte-identical** |
 | `edge_athleticism.html` | `build_edge.py` | **byte-identical** |
 | `coach_fingerprints.html` | `build_coach.py` | **byte-identical** |
+| `clutch.html` | `build_clutch.py` | rebuilt — *intentionally* not identical (bug fix below) |
 
 The SQL in `queries.py` was likewise verified row-for-row against those dumps
 (matchup: st 1518 / gp 506 / rush 253 / goalies 790 incl. 145 NULL-band rows;
@@ -61,11 +62,33 @@ quadrants 5563; goalie_streak 80; coach style⋈rush 282).
 Also note `LR = 9.7` in the matchup page is a **hardcoded league baseline**, not
 computed at runtime, and the narrative thresholds are tuned against it.
 
+## `clutch.html` — rebuilt, and a bug fixed on the way
+
+`build_clutch.py` was lost, so it was reconstructed from the committed page
+(which is the template with data substituted). Two things fell out:
+
+- **The `pts >= 10` floor.** The snapshot embedded 4482 of the view's 6615 rows;
+  `pts>=10` reproduces exactly 4482. It keeps the payload small — the page then
+  applies its own stricter `pts>=30` filter for the scatter.
+- **A real bug: distinct players were being merged.** The original keyed its
+  player dictionary by *name*, so players sharing an abbreviated name collapsed
+  into one entry — **Jamie Benn (L) and Jordie Benn (D) were both "J. Benn"**,
+  as were the two Elias Petterssons, C. Smith and J. Larsson. Every `player_id`
+  has exactly one position, so the builder now keys by `player_id`: 1051
+  name-keyed entries → **1056 real players**. A rebuild therefore does *not*
+  reproduce the old page byte-for-byte, and `clutch.html` has been regenerated
+  with the fix (verified in-browser: renders clean, no console errors).
+
+The page's compaction format, for reference — one delimited record per
+player-season, decoded by `parse()`:
+
+```
+idx . season . teamIdx . gp . tied.up1.up2.up3.down1.down2.down3 . lc . glc . ot
+LG[season] = [tied,up1,up2,up3,down1,down2,down3, close, late]  (% of league pts)
+```
+
 ## Known gaps
 
-- **`clutch.html` has no builder.** `build_clutch.py` was lost. The page was
-  built from `player_clutch_v` (6615 rows; `queries.CLUTCH`), but the builder
-  itself still needs rewriting — until then that page can't be regenerated.
 - **Row-count drift vs the July snapshot** (definitions unchanged, data grew):
   `player_athleticism_v` 3552 → 4733 (Edge backfill), `coach_change_v` 30 → 37.
   Both are display-only and affect no other page's numbers.

@@ -136,9 +136,11 @@ COACH_CHANGE = """
 """
 
 # ------------------------------------------------------------------- clutch
-# The original build_clutch.py was lost; this is the view the page was built
-# from (6615 rows). A builder still needs to be written — see README.
-CLUTCH = "select * from player_clutch_v"
+# Points-by-game-state. The pts>=10 floor is what the original snapshot used
+# (verified: 6615 rows unfiltered -> 4482 at pts>=10, exactly the committed
+# page's record count). It keeps the embedded payload small; the page then
+# applies its own stricter pts>=30 filter for the scatter.
+CLUTCH = "select * from player_clutch_v where pts >= 10"
 
 ALL = {
     "matchup": MATCHUP, "goalie": GOALIE, "quadrants": QUADRANTS,
