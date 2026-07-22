@@ -219,6 +219,47 @@ spend on odds.**
 | Scottfree Analytics CSV | unconfirmed | yes | $69 one-time | clean but coverage unconfirmed |
 | The Odds API | from late-2020 | snapshot≈close | usage-priced | programmatic; snapshot proxy |
 
+## Player props — fail the gate (structurally)
+
+Props are softer markets than moneyline, so they were the best remaining lead.
+The free gate, before touching prop odds: **can we predict a skater's shots on
+goal better than the naive trailing average** (roughly what the book's line is)?
+Rolling as-of over 128,966 player-games (2023-26), predicting with *expected*
+(rolling) TOI — never the actual TOI of the game being predicted.
+
+| model | MAE | log-loss @2.5 |
+|---|---|---|
+| naive trailing mean (≈ the book's line) | 1.0930 | 0.5067 |
+| EWMA (recency-weighted) | 1.1017 | 0.5182 |
+| shots/60 × expected TOI | **1.0919** | **0.5059** |
+
+Our usage model beats naive by **0.1%**. Recency-weighting is actively *worse* —
+chasing hot shooters is a mistake; the long-run mean wins.
+
+**The decisive diagnostic is the Poisson noise floor** — the MAE a model that
+knew each player's *true* rate would still have:
+
+| stat | naive MAE | perfect-model floor | max possible gain |
+|---|---|---|---|
+| shots on goal | 1.0930 | 1.0388 | **5.1%** |
+| blocked shots | 0.7533 | 0.7263 | **3.7%** |
+
+Individual-game props are overwhelmingly **irreducible randomness**. A trailing
+average already captures ~98% of the predictable signal, and even a *perfect*
+model gains only 3.7–5.1% — well under the ~3.5% juice on a −115/−115 prop. This
+is a structural ceiling, not a modelling failure: you cannot out-model Poisson
+noise. Same story as game totals.
+
+Caveat: the opponent-suppression term was effectively untested because
+`player_game_stats.opponent_abbrev` is NULL (an ETL gap, flagged separately).
+It doesn't change the verdict — a ±3–8% matchup tweak cannot break a ceiling
+that sits 5% above naive.
+
+**Where real prop edges actually come from:** information speed (tonight's PP
+units, line combos, late scratches, goalie confirmations) and line shopping
+across books — *not* better historical modelling. That's a news-pipeline and
+multi-account operation, not an analytics project.
+
 ### Conclusion of the monetization investigation
 
 The model is a genuinely skilled, well-calibrated **58.9% winner-picker with no
