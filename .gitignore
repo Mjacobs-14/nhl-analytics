@@ -27,3 +27,6 @@ next-env.d.ts
 *.pem
 npm-debug.log*
 .vercel
+
+# viz snapshot caches (data, not source)
+viz/build/snap/
