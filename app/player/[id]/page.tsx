@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { CookedGauge } from "@/components/CookedGauge";
 import { CareerChart } from "@/components/CareerChart";
 import { getPlayerDetail } from "@/lib/queries";
+import { getPlayerProfile } from "@/lib/profile";
 import { ageInSeason } from "@/lib/cooked/signals";
 import { formatSeason, zoneVar } from "@/lib/zones";
 import type { SignalBreakdown } from "@/lib/cooked";
@@ -33,11 +34,47 @@ const SIGNAL_COPY: Record<string, { name: string; explain: string }> = {
   },
 };
 
+function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  return (
+    <div>
+      <p className="stat text-xl font-semibold">{value}</p>
+      <p className="text-xs" style={{ color: "var(--muted)" }}>{label}</p>
+      {hint && <p className="text-xs" style={{ color: "var(--faint)" }}>{hint}</p>}
+    </div>
+  );
+}
+
 export default async function PlayerPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const detail = await getPlayerDetail(Number(id));
+  const [detail, profile] = await Promise.all([
+    getPlayerDetail(Number(id)),
+    getPlayerProfile(Number(id)),
+  ]);
   if (!detail) notFound();
   const { player, cooked, seasons } = detail;
+
+  const sv = profile.shotVolume[profile.shotVolume.length - 1] ?? null;
+  const ath = profile.athleticism[profile.athleticism.length - 1] ?? null;
+  const clu = profile.clutch[profile.clutch.length - 1] ?? null;
+  const hasProfile = Boolean(sv || ath || clu);
+
+  const edgeRows = ath
+    ? [
+        { label: "Top skating speed", val: ath.topSkatingSpeedMph, unit: " mph", pct: ath.skatingSpeedPct },
+        { label: "Bursts 20+ mph / game", val: ath.burstsPerGame, unit: "", pct: null },
+        { label: "Distance / game", val: ath.avgSkatingDistancePerGame, unit: " mi", pct: ath.distancePct },
+        { label: "Top shot speed", val: ath.topShotSpeedMph, unit: " mph", pct: ath.shotSpeedPct },
+      ]
+    : [];
+
+  const clutchStates = clu
+    ? ([
+        ["Tied", clu.state.tied], ["Up 1", clu.state.up1], ["Up 2", clu.state.up2],
+        ["Up 3+", clu.state.up3], ["Down 1", clu.state.down1], ["Down 2", clu.state.down2],
+        ["Down 3+", clu.state.down3],
+      ] as const)
+    : [];
+  const clutchMax = Math.max(1, ...clutchStates.map(([, v]) => v));
 
   const chartPoints = seasons
     .filter((s) => s.gamesPlayed > 0)
@@ -166,6 +203,111 @@ export default async function PlayerPage({ params }: { params: Promise<{ id: str
           </div>
         </section>
       </div>
+
+      {hasProfile && (
+        <>
+          <p className="eyebrow mt-8 mb-3">The rest of the profile</p>
+          <div className="grid md:grid-cols-3 gap-4 items-start">
+            {/* Shot profile */}
+            <section className="card p-6">
+              <p className="eyebrow mb-1">Shot profile</p>
+              {sv ? (
+                <>
+                  <p className="text-xs mb-4" style={{ color: "var(--faint)" }}>
+                    {formatSeason(sv.season)} · volume vs. finishing
+                  </p>
+                  <div className="grid grid-cols-2 gap-y-4">
+                    <Stat label="Shots on goal /60" value={sv.sogPer60.toFixed(1)} />
+                    <Stat label="Points / game" value={sv.ppg.toFixed(2)} />
+                    <Stat label="TOI / game" value={`${sv.toiMinPerGame.toFixed(1)} min`} />
+                    <Stat label="Goals" value={String(sv.goals)} />
+                  </div>
+                </>
+              ) : (
+                <p className="text-sm mt-3" style={{ color: "var(--muted)" }}>No shot data.</p>
+              )}
+            </section>
+
+            {/* Skating — NHL Edge */}
+            <section className="card p-6">
+              <p className="eyebrow mb-1">Skating · NHL Edge</p>
+              {ath ? (
+                <>
+                  <p className="text-xs mb-4" style={{ color: "var(--faint)" }}>
+                    {formatSeason(ath.season)} · percentile vs. league
+                  </p>
+                  <div className="space-y-3">
+                    {edgeRows.map((r) => (
+                      <div key={r.label}>
+                        <div className="flex justify-between text-sm">
+                          <span className="font-medium">{r.label}</span>
+                          <span className="stat" style={{ color: "var(--muted)" }}>
+                            {r.val === null ? "—" : `${r.val.toFixed(1)}${r.unit}`}
+                          </span>
+                        </div>
+                        <div className="h-1.5 rounded-full mt-1" style={{ background: "var(--gauge-track)" }}>
+                          <div
+                            className="h-full rounded-full"
+                            style={{
+                              width: `${r.pct === null ? 0 : Math.round(r.pct)}%`,
+                              background: "var(--rink-blue)",
+                            }}
+                          />
+                        </div>
+                        {r.pct !== null && (
+                          <p className="text-xs mt-0.5" style={{ color: "var(--faint)" }}>
+                            {Math.round(r.pct)}th percentile
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <p className="text-sm mt-3" style={{ color: "var(--muted)" }}>
+                  No Edge tracking (2021–22 onward, skaters only).
+                </p>
+              )}
+            </section>
+
+            {/* Clutch */}
+            <section className="card p-6">
+              <p className="eyebrow mb-1">Clutch · game state</p>
+              {clu ? (
+                <>
+                  <p className="text-xs mb-4" style={{ color: "var(--faint)" }}>
+                    {formatSeason(clu.season)} · where the points came
+                  </p>
+                  <div className="grid grid-cols-2 gap-y-4 mb-4">
+                    <Stat
+                      label="Clutch tilt vs. league"
+                      value={`${clu.tilt >= 0 ? "+" : ""}${clu.tilt.toFixed(0)} pts`}
+                      hint={clu.tilt >= 0 ? "leans to close games" : "leans to blowouts"}
+                    />
+                    <Stat label="Late & close pts" value={`${clu.ptsLateClose} (${clu.goalsLateClose}G)`} />
+                  </div>
+                  <div className="space-y-1.5">
+                    {clutchStates.map(([label, v]) => (
+                      <div key={label} className="flex items-center gap-2">
+                        <span className="stat text-xs" style={{ width: 48, color: "var(--muted)" }}>{label}</span>
+                        <div className="h-2 rounded-full flex-1" style={{ background: "var(--gauge-track)" }}>
+                          <div
+                            className="h-full rounded-full"
+                            style={{ width: `${(v / clutchMax) * 100}%`, background: "var(--zone-3)" }}
+                          />
+                        </div>
+                        <span className="stat text-xs text-right" style={{ width: 22 }}>{v}</span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <p className="text-sm mt-3" style={{ color: "var(--muted)" }}>No game-state data.</p>
+              )}
+            </section>
+          </div>
+        </>
+      )}
 
       {cooked?.status === "scored" && (
         <p className="text-xs mt-4" style={{ color: "var(--faint)" }}>

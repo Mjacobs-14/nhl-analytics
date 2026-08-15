@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { PlayerSearch } from "@/components/PlayerSearch";
 
 const tabs = [
   { href: "/", label: "The Board" },
@@ -12,7 +13,7 @@ export function NavBar() {
   const path = usePathname();
 
   return (
-    <nav className="flex gap-5 mt-3" aria-label="Sections">
+    <nav className="flex gap-5 mt-3 items-center" aria-label="Sections">
       {tabs.map((t) => {
         const active =
           t.href === "/"
@@ -33,6 +34,7 @@ export function NavBar() {
           </Link>
         );
       })}
+      <PlayerSearch />
     </nav>
   );
 }
