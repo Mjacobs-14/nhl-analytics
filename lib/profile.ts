@@ -10,6 +10,8 @@ const cached = <A extends unknown[], R>(fn: (...args: A) => Promise<R>, key: str
 
 const n = (x: unknown): number => Number(x);
 const nn = (x: unknown): number | null => (x == null ? null : Number(x));
+// player_athleticism_v stores percentiles as 0–1 fractions; the UI wants 0–100.
+const pct = (x: unknown): number | null => (x == null ? null : Number(x) * 100);
 
 export interface ShotVolumeSeason {
   season: number;
@@ -103,9 +105,9 @@ export const getPlayerProfile = cached(async (playerId: number): Promise<PlayerP
       avgSkatingDistancePerGame: nn(r.avg_skating_distance_per_game),
       topShotSpeedMph: nn(r.top_shot_speed_mph),
       offensiveZoneTimePct: nn(r.offensive_zone_time_pct),
-      skatingSpeedPct: nn(r.skating_speed_percentile),
-      shotSpeedPct: nn(r.shot_speed_percentile),
-      distancePct: nn(r.distance_skated_percentile),
+      skatingSpeedPct: pct(r.skating_speed_percentile),
+      shotSpeedPct: pct(r.shot_speed_percentile),
+      distancePct: pct(r.distance_skated_percentile),
     })),
     clutch: clu.map((r) => {
       const pts = n(r.pts);
