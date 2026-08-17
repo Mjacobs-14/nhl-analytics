@@ -22,15 +22,17 @@ export function PlayerSearch() {
   const [active, setActive] = useState(0);
   const boxRef = useRef<HTMLDivElement>(null);
 
-  // debounced fetch
+  // debounced fetch — all state updates happen inside the async timeout callback,
+  // never synchronously in the effect body (react-hooks/set-state-in-effect).
   useEffect(() => {
     const term = q.trim();
-    if (term.length < 2) {
-      setHits([]);
-      return;
-    }
     const ctl = new AbortController();
     const t = setTimeout(async () => {
+      if (term.length < 2) {
+        setHits([]);
+        setOpen(false);
+        return;
+      }
       try {
         const res = await fetch(`/api/search?q=${encodeURIComponent(term)}`, { signal: ctl.signal });
         if (res.ok) {
