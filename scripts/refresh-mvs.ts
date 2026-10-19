@@ -8,7 +8,9 @@
 
 import { client } from "../db";
 
-const VIEWS = ["team_empty_net_mv", "pbp_faceoff_mv", "pbp_hit_grid_mv"] as const;
+// pbp_faceoff_mv / pbp_hit_grid_mv are frozen plain tables now (play_events was
+// archived 2026-10), so they are deliberately not in this list.
+const VIEWS = ["team_empty_net_mv"] as const;
 
 async function main() {
   for (const view of VIEWS) {
