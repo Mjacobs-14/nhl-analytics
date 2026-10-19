@@ -81,3 +81,8 @@ jobs:
           sb.rpc('refresh_player_career_regular_vs_playoff_stats').execute()
           print('career table refreshed')
           "
+
+      - name: Refresh materialized views (direct connection; too slow for the 8s API timeout)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: npm run refresh:mvs

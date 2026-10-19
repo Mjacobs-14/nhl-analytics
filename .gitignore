@@ -27,3 +27,6 @@ next-env.d.ts
 *.pem
 npm-debug.log*
 .vercel
+
+# local data archives (not source)
+archive/
