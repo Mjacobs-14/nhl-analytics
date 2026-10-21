@@ -16,16 +16,28 @@ field names in the response aren't fully documented. This script:
   2. Makes a best-effort attempt to extract common fields into
      dedicated columns for easy querying.
 
-Run this AFTER pull_nhl_data.py has populated your `players` table
-(Edge ETL reads player IDs from there rather than re-discovering them).
+WHAT GETS FETCHED: only players who actually appeared in a game of that
+season and game type (from player_game_stats), and of those only the ones
+whose stored Edge row is missing or covers fewer games than they've played
+(view `edge_pull_status_v`, sql/036). Edge stats are season-to-date, so this
+keeps the season in progress fresh — each night it re-pulls whoever played,
+and if Edge lags a day the row stays behind and is retried the next night.
+It never asks about retired players or about playoffs before any exist.
+(The old version requested every player in `players` x both game types —
+~6,000 calls, nearly all 404s — and skipped anyone already pulled, so
+in-season rows froze at whatever the first pull saw.)
+
+Run this AFTER pull_nhl_data.py has populated `players` and
+`player_game_stats` for the games in question.
 
 SETUP: same SUPABASE_URL / SUPABASE_KEY environment variables as
-pull_nhl_data.py. Also run sql/003_edge_schema.sql in Supabase first.
+pull_nhl_data.py. Also run sql/003_edge_schema.sql and sql/036 first.
 
 USAGE:
-    python pull_edge_data.py
+    python pull_edge_data.py                       # season in progress
     python pull_edge_data.py --seasons 20232024,20242025,20252026
     python pull_edge_data.py --seasons 20252026 --limit 20   # quick test
+    python pull_edge_data.py --force               # re-pull everyone who played
 """
 
 import os
@@ -34,6 +46,7 @@ import argparse
 import time
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 
 import requests
 from supabase import create_client
@@ -179,54 +192,36 @@ def _to_pct(fraction):
     return round(fraction * 100, 2) if fraction is not None else None
 
 
-def get_players(sb, limit=None):
-    """Pulls player_id + position from the players table already populated
-    by pull_nhl_data.py. Paged — an unpaginated select silently caps at
-    PostgREST's 1000-row default, which quietly dropped players."""
-    if limit:
-        return sb.table("players").select("player_id, position, full_name").limit(limit).execute().data
-
-    players = []
+def get_status(sb, season, game_type_label):
+    """Everyone who appeared in a game of this season + game type, with games
+    played (boxscore) vs games covered by their stored Edge row. Paged — an
+    unpaginated select silently caps at PostgREST's 1000-row default."""
+    rows = []
     page_size = 1000
     offset = 0
     while True:
-        rows = (
-            sb.table("players")
-            .select("player_id, position, full_name")
+        page = (
+            sb.table("edge_pull_status_v")
+            .select("player_id, position, full_name, actual_gp, edge_gp")
+            .eq("season", season)
+            .eq("game_type", game_type_label)
+            .order("player_id")
             .range(offset, offset + page_size - 1)
             .execute()
             .data
         )
-        if not rows:
+        if not page:
             break
-        players.extend(rows)
-        if len(rows) < page_size:
-            break
-        offset += page_size
-    return players
-
-
-def get_existing_edge_keys(sb):
-    """Returns a set of (player_id, season, game_type) already pulled,
-    so reruns skip what's already there instead of redoing everything."""
-    existing = set()
-    page_size = 1000
-    offset = 0
-    while True:
-        result = (
-            sb.table("player_season_edge_stats")
-            .select("player_id, season, game_type")
-            .range(offset, offset + page_size - 1)
-            .execute()
-        )
-        rows = result.data
-        if not rows:
-            break
-        existing.update((r["player_id"], r["season"], r["game_type"]) for r in rows)
-        if len(rows) < page_size:
+        rows.extend(page)
+        if len(page) < page_size:
             break
         offset += page_size
-    return existing
+    return rows
+
+
+def needs_refresh(row):
+    """Missing row, or Edge covers fewer games than the player has played."""
+    return row["edge_gp"] is None or row["edge_gp"] < row["actual_gp"]
 
 
 def fetch_edge_payload(player, season, game_type_code):
@@ -249,13 +244,21 @@ def upsert_edge_row(sb, player, season, game_type_label, payload):
     if not payload:
         return False  # no data for this player/season/game-type combo — common, not an error
 
-    fields = {} if is_goalie else extract_skater_fields(payload)
+    # Goalies only get games_played extracted — it's what edge_pull_status_v
+    # compares against, so without it every goalie would look stale forever.
+    if is_goalie:
+        fields = {"games_played": safe_get(payload, "player", "gamesPlayed")}
+    else:
+        fields = extract_skater_fields(payload)
 
     row = {
         "player_id": player_id,
         "season": season,
         "game_type": game_type_label,
         "raw_json": payload,
+        # Upserts don't touch updated_at on their own; stamp it so you can see
+        # when a row was last refreshed.
+        "updated_at": datetime.now(timezone.utc).isoformat(),
         **fields,
     }
 
@@ -271,9 +274,9 @@ def main():
     parser.add_argument("--seasons", type=str, default=",".join(DEFAULT_SEASONS),
                          help="Comma-separated seasons, e.g. 20232024,20242025,20252026")
     parser.add_argument("--limit", type=int, default=None,
-                         help="Only process the first N players (useful for a quick test run)")
+                         help="Only fetch the first N players per season/game type (quick test run)")
     parser.add_argument("--force", action="store_true",
-                         help="Re-fetch even if already in the database (default: skip existing)")
+                         help="Re-fetch everyone who played, even if their Edge row is up to date")
     parser.add_argument("--workers", type=int, default=3,
                          help="Edge fetches in parallel (default 3 — NHL API rate-limits above this)")
     args = parser.parse_args()
@@ -281,35 +284,25 @@ def main():
     seasons = args.seasons.split(",")
     sb = get_supabase_client()
 
-    players = get_players(sb, limit=args.limit)
-    print(f"Found {len(players)} players in the database.")
-
-    existing_keys = set() if args.force else get_existing_edge_keys(sb)
-    if existing_keys:
-        print(f"Found {len(existing_keys)} player/season/game-type combos already pulled — will skip those.")
-
-    # No-data combos aren't in the DB, so without this cache every rerun
-    # re-fetches thousands of 404s before reaching new ground.
-    import json as _json
-    from pathlib import Path as _Path
-    no_data_cache = _Path(__file__).with_name("edge_no_data.json")
-    no_data_keys = set()
-    if not args.force and no_data_cache.exists():
-        no_data_keys = {tuple(k) for k in _json.loads(no_data_cache.read_text())}
-        print(f"Skipping {len(no_data_keys)} combos known to have no data (edge_no_data.json).")
-
     total_pulled = 0
-    total_skipped_no_data = 0
-    total_skipped_existing = 0
+    total_no_data = 0
+    total_current = 0
 
     for season in seasons:
         for game_type_code, game_type_label in GAME_TYPES.items():
-            todo = [p for p in players
-                    if (p["player_id"], season, game_type_label) not in existing_keys
-                    and (p["player_id"], season, game_type_label) not in no_data_keys]
-            total_skipped_existing += len(players) - len(todo)
+            status = get_status(sb, season, game_type_label)
+            if not status:
+                # e.g. playoffs before they start — nothing to ask the API about
+                print(f"\n=== Season {season} — {game_type_label}: no games played, skipping ===")
+                continue
+
+            todo = status if args.force else [r for r in status if needs_refresh(r)]
+            if args.limit:
+                todo = todo[:args.limit]
+            total_current += len(status) - len(todo)
             print(f"\n=== Season {season} — {game_type_label} "
-                  f"({len(todo)} to fetch, {len(players) - len(todo)} already had) ===")
+                  f"({len(status)} players appeared; {len(todo)} to fetch, "
+                  f"{len(status) - len(todo)} already current) ===")
 
             done = 0
             with ThreadPoolExecutor(max_workers=args.workers) as executor:
@@ -324,20 +317,17 @@ def main():
                         if upsert_edge_row(sb, player, season, game_type_label, future.result()):
                             total_pulled += 1
                         else:
-                            total_skipped_no_data += 1
-                            no_data_keys.add((player["player_id"], season, game_type_label))
+                            # Played, but Edge has nothing (yet) — retried next run.
+                            total_no_data += 1
                     except Exception as e:
                         print(f"  ! Error on player {player['player_id']} ({player.get('full_name')}): {e}")
 
                     if done % 100 == 0 or done == len(todo):
                         print(f"  ...{done}/{len(todo)} fetched")
-                        no_data_cache.write_text(_json.dumps(sorted(list(k) for k in no_data_keys)))
-
-            no_data_cache.write_text(_json.dumps(sorted(list(k) for k in no_data_keys)))
 
     print(f"\nDone. Rows pulled: {total_pulled}, "
-          f"skipped (no data): {total_skipped_no_data}, "
-          f"skipped (already had it): {total_skipped_existing}")
+          f"no Edge data yet: {total_no_data}, "
+          f"already current: {total_current}")
 
 
 if __name__ == "__main__":
