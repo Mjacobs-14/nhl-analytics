@@ -12,7 +12,13 @@
 -- rows at the first pull (2026-10: 667 of 768 players stuck at 1 game).
 --
 -- player_game_stats is unique on (game_id, player_id), so count(*) is games
--- played. ~13 ms for one season through the API.
+-- played. Only games with ice time count: backup goalies get a boxscore row
+-- for games they dress but don't play, which Edge doesn't count. ~13 ms for
+-- one season through the API.
+--
+-- Depends on games.game_type being set. Placeholder game rows (game_type
+-- NULL) drop out of every regular-season view; etl/pull_nhl_data.py now
+-- refetches those instead of skipping them.
 -- ============================================================
 
 create or replace view public.edge_pull_status_v as
@@ -21,6 +27,7 @@ with played as (
   from player_game_stats pgs
   join games g on g.game_id = pgs.game_id
   where g.game_type in ('regular', 'playoff')
+    and coalesce(pgs.toi_seconds, 0) > 0   -- backup goalies dress without playing
   group by pgs.player_id, g.season, g.game_type
 )
 select pl.player_id, p.position, p.full_name, pl.season, pl.game_type,
