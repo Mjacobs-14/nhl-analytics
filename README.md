@@ -1,10 +1,35 @@
 # NHL Analytics — Is He Cooked? 🥅🔥
 
 Group project: a shared NHL database + automated pipeline (Matt) merged with the
-"Is He Cooked?" player-decline model and dashboard (Ruston). Every skater in the
-league gets a **Cooked Score** (0–100) on a fresh-to-cooked gauge, computed from
-public NHL data, on top of a shared Postgres database that grows on its own.
-For arguments in the group chat, not for wagering.
+"Is He Cooked?" player-decline model and dashboard (Ruston). It started as one
+model — every skater gets a **Cooked Score** (0–100) on a fresh-to-cooked gauge —
+and grew into a full analytics stack on public NHL data: shot-level
+play-by-play since 2018-19, an expected-goals model, a team matchup model,
+interactive visualizations, and out-of-sample backtests.
+
+This is an analytics project, not a betting tool. Sportsbook closing lines appear
+in the backtests only as a benchmark: they are the sharpest public forecast of
+game outcomes, so they're the strictest test of whether a model knows anything.
+
+## What's in here
+
+| Area | What it is | Where |
+|---|---|---|
+| **Model validation** — start here | Out-of-sample backtest of the matchup model across 9,781 games, scored against real outcomes and against market closing lines | [`analysis/README.md`](analysis/README.md) |
+| Matchup model | Team-vs-team expected goals from venue-split shot-location profiles, special teams, and the starting goalie | [`viz/matchup_lab.html`](viz/matchup_lab.html), `sql/032`–`033` |
+| Expected goals + shot data | ~1.3M shot attempts with coordinates, game state and rush flags; a location-based xG model built on them | `etl/pull_play_by_play.py`, `sql/016`–`022` |
+| Derived metrics | SQL views: shot volume vs. finishing, clutch scoring by game state, goalie streakiness, coach style fingerprints, NHL Edge skating | `sql/` |
+| Visualizations | Six self-contained interactive pages | [`viz/`](viz/README.md) |
+| Dashboard | Next.js app: the Cooked Score board, player pages, and an analytics page | `app/`, `npm run dev` |
+| Cooked Score | The original player-decline model | [below](#the-model-v1), `lib/cooked/` |
+
+**Headline result:** the matchup model picks winners at **58.9%** out of sample
+(home team wins 53.6%), and its probabilities are well calibrated — when it says
+60%, teams win about 60%. Against closing lines it matches the market but does
+not beat it: the information it captures is already priced in. The write-up
+covers how leakage was ruled out, what improved the model (the starting goalie),
+the four refinements that didn't, and why player props and game totals are
+dominated by randomness.
 
 ## Stack
 
@@ -21,6 +46,7 @@ For arguments in the group chat, not for wagering.
 sql/
   001_schema.sql                 core tables (source of truth — db/schema.ts mirrors it)
   002_derived_metrics_views.sql  custom formulas as SQL views
+  003–036                        Edge, play-by-play, xG, clutch, goalie, coach and matchup views
 etl/pull_nhl_data.py             daily boxscore pull (GitHub Actions, 9:00 UTC)
 .github/workflows/etl.yml        the schedule
 scripts/
@@ -28,6 +54,9 @@ scripts/
   ingest.ts                      rosters + career season totals + game logs (npm run ingest)
   cook.ts                        scores everyone (npm run cook)
 lib/cooked/                      the model — config.ts (knobs), signals.ts (math), index.ts (blend)
+etl/                             Python pullers: boxscores, play-by-play/shots, NHL Edge, game details
+analysis/                        backtests + model validation (see analysis/README.md)
+viz/                             self-contained interactive visualizations
 lib/nhl.ts                       NHL API client (throttled + retrying; the API 429s greedy pulls)
 db/                              drizzle schema + Postgres client
 app/, components/                Next.js UI
@@ -119,6 +148,6 @@ the model output the same way.
 - In-season rolling windows from `player_game_stats` (the daily ETL keeps it growing)
 - Use the ETL's hits/blocks/faceoffs for defensive-value signals
 - Coach/system fit: does a player look cooked or just miscast in a new system?
-- "Cooked odds": probability the score rises next season (backtest against history)
+- Cooked Score backtest: probability the score rises next season, tested against history
 - Deploy the app (Vercel) so the board lives at a URL
 - Pick 2–3 more "underrepresented" metrics to feature as views
