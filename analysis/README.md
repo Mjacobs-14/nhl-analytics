@@ -8,14 +8,15 @@ Two benchmarks, in increasing difficulty:
    happened, compared with naive baselines (always pick the home team).
 2. **Sportsbook closing lines** — the market's final odds are the sharpest public
    forecast of a game, so they are the toughest available yardstick. A model that
-   *matches* the closing line has learned what the best forecasters know; one that
-   consistently *disagrees* with it is usually wrong. Odds are used here purely
+   comes close to the closing line has learned much of what the best forecasters
+   know; where it disagrees with the line, the line is usually right. Odds are used here purely
    as a measuring stick — this is not a betting project.
 
 **Summary:** the matchup model is genuinely predictive (58.9% winner accuracy vs.
-53.6% for "always pick home", well calibrated) and **matches but does not beat
-the closing line** — the signal it captures is already reflected in market
-prices. Along the way: what moved the model (starting-goalie identity), four
+53.6% for "always pick home", well calibrated) but **trails the closing line**.
+On the same 3,497 games, the closing-line favorite won 60.8% of the time versus
+59.2% for the model, and the market's probabilities score better on log-loss
+and Brier. The signal the model captures is real, and already priced in. Along the way: what moved the model (starting-goalie identity), four
 refinements that didn't, why game totals and player props are dominated by
 randomness, and one market inefficiency (tired home teams) that faded over time.
 
@@ -85,18 +86,17 @@ Rolling + starting goalie, by how many games each team has played:
 | games 20–39 (mid-season) | 3,768 | **60.0%** |
 | games 40+ | 100 | 63.0% |
 
-In October the model runs on last year's stale prior and performs like it. By
-~US Thanksgiving, once both teams have ~20 games logged, it clears 60% —
-most of the way to the ceiling. **Practical rule for 2026-27: treat October as
-warm-up; trust the picks from late November on.**
+In October the model runs on last year's stale prior and performs like it.
+**Accuracy stabilizes after about 20 games played per team** (roughly late
+November), when current-season data outweighs the prior, at around 60% —
+most of the way to the leaky ceiling.
 
 ### What this does and doesn't show
 
-58% (59%+ mid-season) is a real, calibrated model — but accuracy alone doesn't
-show it knows more than the market. The market already picks winners at ~62–65% because favorites
-win often; the bar is beating the *closing line* (52.4% break-even at −110
-against the line, not against a coin flip). We've shown skill; we have **not**
-shown skill the market hasn't already priced.
+58% (59%+ mid-season) is a real, calibrated model — but beating a coin flip or
+the home team doesn't show it knows more than the market. The stricter
+comparison is the closing line, scored on exactly the same games (next
+section): there the market is ahead.
 
 ### Totals & team totals — tested, rejected (2026-07)
 
@@ -109,7 +109,7 @@ because offense/defense strengths cancel in the *sum*. And the ceiling is low
 for anyone: actual-total SD (2.30) ≈ pure Poisson noise at 6.2 goals (2.49), so
 game totals are mostly irreducible randomness.
 
-Team totals had a faint pulse (corr 0.17, calibrated) but only tie "always bet
+Team totals had a faint pulse (corr 0.17, calibrated) but only tie "always predict
 over" on accuracy. Takeaway: **the model is far better at *differences* (who
 wins, margin corr 0.22) than *sums* (how many goals).** Moneyline / margin is
 our market. Don't revisit totals without a fundamentally different model.
@@ -144,15 +144,16 @@ market signal, and we already have game dates + `etl/venue_coords.json`.
   Side-note: the defensive shot-volume signal hints a **possession/Corsi term**
   (the model is pure-xG and ignores raw shot volume) could be a small feature.
 
-## Validation against closing lines — RESULT (2026-07): matches the market, doesn't beat it
+## Validation against closing lines — RESULT: skilled, but trails the market
 
 `score_vs_odds.py` removes the bookmaker margin ("devigs") from closing
 moneylines to get the market's probability for each game, then measures what
 happens in the games where the model disagrees with the market by more than
-`--edge`. The return of a hypothetical flat stake on the model's side is a
-standard, unforgiving way to score those disagreements: positive means the
-model was right more often than the market implied. It reports that return (ROI), closing-line value, and favorite/underdog/
-maturity breakdowns. `fetch_sbr_odds.py` pulls the closing lines from Sportsbook
+`--edge`. Each disagreement is scored by the return of a hypothetical fixed
+stake on the model's side at the closing price — a standard way to weight the
+disagreements by how confident the market was: positive means the model was
+right more often than the market implied. It reports that return, plus
+favorite/underdog and season-maturity breakdowns. `fetch_sbr_odds.py` pulls the closing lines from Sportsbook
 Reviews Online (free archive, 2018-19 .. 2022-23) and maps them to gamePk.
 
 ```
@@ -162,27 +163,42 @@ python score_vs_odds.py --preds preds.csv --odds odds.csv          # score it
 python score_vs_odds.py --self-test                                # validate the math
 ```
 
-**Verdict: the model does not outperform the market.** 4 out-of-sample seasons
-(2019-20 .. 2022-23), 3,497 games matched to closing lines:
+**Verdict: the model trails the market.** 4 out-of-sample seasons
+(2019-20 .. 2022-23), 3,497 games matched to closing lines.
 
-| Bet filter | Bets | Win % | ROI |
+Head to head on the same games (market = the closing line's devigged
+probability; a pick is whichever side it favors):
+
+| | Picks winner | Log-loss (lower better) | Brier (lower better) |
 |---|---|---|---|
-| model edge ≥3% (flat) | 2,376 | 44.1% | **−2.4%** |
-| model edge ≥5% (flat) | 1,662 | 43.1% | **−2.0%** |
-| model edge ≥2% (¼-Kelly) | 2,731 | 44.4% | **−1.7%** |
+| Always pick home | 53.4% | — | — |
+| **Model** | **59.2%** | 0.669 | 0.238 |
+| **Closing line** | **60.8%** | **0.659** | **0.233** |
 
-Every configuration loses ~the vig. The model's apparent CLV (+0.077) is an
-illusion — when it disagrees with the close, the close is usually right. The
-decisive cut is maturity: **the mature-game segment (≥20 gp), where the model's
-winner-pick skill peaks at 60%, is the WORST betting segment (−7% ROI).** Its
-skill is entirely priced in. Favorites ≈ breakeven; underdogs negative; the only
-non-negative slice is early-season (<20 gp), but that's noise and the model is
-weakest there. The "underdog value" and "mature-game" hypotheses are falsified.
+The two agree on 81% of games. In the 635 games where they pick different
+winners, the model is right 45.7% of the time. The gap holds in both parts of
+the season: 58.5% vs 59.7% before each team's 20th game, 60.4% vs 62.6% after.
 
-**Bottom line:** 58.9% is a genuinely skilled, well-calibrated winner-picker
-whose information is **already priced in** by the market (2019-2023). That's
-the expected result for a model built only on public shot data, and a useful
-validation that it's measuring something real rather than overfitting.
+Scoring the disagreements against the closing price says the same thing:
+
+| Model–market disagreement | Games | Model right | Return vs. market |
+|---|---|---|---|
+| model differs by ≥3% | 2,376 | 44.1% | **−2.4%** |
+| model differs by ≥5% | 1,662 | 43.1% | **−2.0%** |
+| model differs by ≥2% (weighted by size of disagreement) | 2,731 | 44.4% | **−1.7%** |
+
+Every threshold comes out slightly negative — about the size of the bookmaker
+margin. The decisive cut is maturity: **the mature-game segment (≥20 gp), where
+the model's raw accuracy peaks at 60%, is where it adds the least beyond the
+market (−7% return).** Its skill is entirely priced in. Favorites ≈ break-even;
+underdogs negative; the only non-negative slice is early-season (<20 gp), which
+is noise. The "underdog value" and "mature-game" hypotheses are falsified.
+
+**Bottom line:** a genuinely skilled, well-calibrated winner-picker (58.9%
+overall) that **trails the closing line** by about 1.6 points of accuracy.
+That's the expected result for a model built only on public shot data — the
+market also prices injuries, line changes and confirmed starters — and it
+validates that the model measures something real rather than overfitting.
 
 ## Rest / back-to-backs / travel — a real market bias that later faded
 
@@ -199,17 +215,18 @@ fatigue shows the **first genuine crack in market efficiency**:
 
 **The book over-prices tired home teams:** on a back-to-back they win 41.9% but
 are lined at 50.0% — the market over-weights home ice and under-adjusts for
-fatigue. Fading the tired team returned **+4.3% ROI over 937 bets** vs the close.
+fatigue. Siding with the rested team in those games scored **+4.3% vs. the
+closing price over 937 games**.
 
 **But it isn't robust:**
-- Season-unstable: per-season ROI was +1.6%, **−4.0%**, +26% (COVID bubble,
+- Season-unstable: per-season return was +1.6%, **−4.0%**, +26% (COVID bubble,
   n=66, unrepresentative), +11%, **−8.3%** — 2 of 5 seasons negative, and the
   aggregate leans on the empty-arena COVID season.
-- The larger leg (away-tired → bet home, 710 bets) is only +1.9% ROI — inside
-  the noise; essentially priced. The real signal is the smaller "fade tired
-  home teams" leg (227 bets, ~1.8σ vs the market).
-- Rest-differential, travel distance, and 3-in-4 congestion showed **no** edge
-  (all priced or noise).
+- The larger group (tired away team, 710 games) is only +1.9% — inside the
+  noise; essentially priced. The real signal is the smaller tired-home-team
+  group (227 games, ~1.8σ vs the market).
+- Rest-differential, travel distance, and 3-in-4 congestion showed **no**
+  mispricing (all priced or noise).
 
 Verdict: a real, directionally-sensible bias worth pursuing — the market
 under-prices home-team back-to-back fatigue — but the sample is too thin and
@@ -222,11 +239,11 @@ persists — it needs only schedule + outcomes, which we have for all 8 seasons:
 
 | Era | home-b2b games | home win % |
 |---|---|---|
-| 2018–2023 (where the edge showed) | 283 | **41.3%** |
+| 2018–2023 (where the bias showed) | 283 | **41.3%** |
 | 2023–2026 (no free odds archive) | 217 | **48.8%** |
 
 2025-26 (complete) shows **53.9%** — no effect; tired home teams now win at their
-normal home rate. The signal that powered the +4.3% ROI has decayed toward league
+normal home rate. The signal behind the +4.3% has decayed toward league
 average (likely league-wide load-management + market adjustment). So buying
 2023-26 closing odds would most likely just confirm the bias has closed, so
 recent odds weren't worth sourcing.
@@ -236,15 +253,15 @@ recent odds weren't worth sourcing.
 | Source | Recent seasons | Closing ML? | Cost | Verdict |
 |---|---|---|---|---|
 | Sportsbook Reviews Online | no (stops 2022-23) | yes | free | already used |
-| checkbestodds.com | 2023-26 | **no** (best/3-way) | free | biases ROII up; unfit |
+| checkbestodds.com | 2023-26 | **no** (best/3-way) | free | best-available odds, not closing; unfit |
 | Scottfree Analytics CSV | unconfirmed | yes | $69 one-time | clean but coverage unconfirmed |
 | The Odds API | from late-2020 | snapshot≈close | usage-priced | programmatic; snapshot proxy |
 
 ## Player props — fail the gate (structurally)
 
-Props are softer markets than moneyline, so they were the best remaining lead.
-The free gate, before touching prop odds: **can we predict a skater's shots on
-goal better than the naive trailing average** (roughly what the book's line is)?
+Player-level stats were the next question: **can we predict a skater's shots
+on goal better than the naive trailing average** (roughly how sportsbook player
+lines are set)?
 Rolling as-of over 128,966 player-games (2023-26), predicting with *expected*
 (rolling) TOI — never the actual TOI of the game being predicted.
 
@@ -267,7 +284,8 @@ knew each player's *true* rate would still have:
 
 Individual-game props are overwhelmingly **irreducible randomness**. A trailing
 average already captures ~98% of the predictable signal, and even a *perfect*
-model gains only 3.7–5.1% — well under the ~3.5% juice on a −115/−115 prop. This
+model gains only 3.7–5.1% — less than the margin built into a typical player
+line. This
 is a structural ceiling, not a modelling failure: you cannot out-model Poisson
 noise. Same story as game totals.
 
@@ -276,16 +294,15 @@ Caveat: the opponent-suppression term was effectively untested because
 It doesn't change the verdict — a ±3–8% matchup tweak cannot break a ceiling
 that sits 5% above naive.
 
-**Where real prop edges actually come from:** information speed (tonight's PP
-units, line combos, late scratches, goalie confirmations) and line shopping
-across books — *not* better historical modelling. That's a news-pipeline and
-multi-account operation, not an analytics project.
+What *does* move single-game player outcomes is same-day information
+(tonight's power-play units, line combinations, late scratches) — not more
+historical modelling.
 
 ### Conclusion
 
-The model is a genuinely skilled, well-calibrated **58.9% winner-picker whose
-information is already reflected in closing lines.** The one market
-inefficiency we found (tired home teams) was real in 2018-2023 but has
-**faded** in recent seasons. Net: the model is a sound analytical tool for
-previews and explanation — it describes matchups as well as the market prices
-them — and the backtest framework is reusable for testing future features.
+The model is a genuinely skilled, well-calibrated **58.9% winner-picker that
+trails the closing line** (59.2% vs 60.8% on the same games): its information
+is real and already priced in. The one market inefficiency we found (tired
+home teams) was real in 2018-2023 but has **faded** in recent seasons. Net: the
+model is a sound tool for previews and for explaining *why* a matchup tilts one
+way, and the backtest framework is reusable for testing future features.
