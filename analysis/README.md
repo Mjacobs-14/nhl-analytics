@@ -1,7 +1,23 @@
-# Model backtests
+# Model validation
 
-Honest, out-of-sample tests of whether our models actually predict games —
-run **before** treating any of them as a betting edge.
+Out-of-sample tests of whether our models actually predict NHL games.
+
+Two benchmarks, in increasing difficulty:
+
+1. **Real outcomes** — accuracy, log-loss and calibration against what actually
+   happened, compared with naive baselines (always pick the home team).
+2. **Sportsbook closing lines** — the market's final odds are the sharpest public
+   forecast of a game, so they are the toughest available yardstick. A model that
+   *matches* the closing line has learned what the best forecasters know; one that
+   consistently *disagrees* with it is usually wrong. Odds are used here purely
+   as a measuring stick — this is not a betting project.
+
+**Summary:** the matchup model is genuinely predictive (58.9% winner accuracy vs.
+53.6% for "always pick home", well calibrated) and **matches but does not beat
+the closing line** — the signal it captures is already reflected in market
+prices. Along the way: what moved the model (starting-goalie identity), four
+refinements that didn't, why game totals and player props are dominated by
+randomness, and one market inefficiency (tired home teams) that faded over time.
 
 ## `backtest_matchup_rolling.py` — Matchup model
 
@@ -74,10 +90,10 @@ In October the model runs on last year's stale prior and performs like it. By
 most of the way to the ceiling. **Practical rule for 2026-27: treat October as
 warm-up; trust the picks from late November on.**
 
-### Honest bottom line
+### What this does and doesn't show
 
-58% (59%+ mid-season) is a real, calibrated model — but **not proof of a
-betting edge.** The market already picks winners at ~62–65% because favorites
+58% (59%+ mid-season) is a real, calibrated model — but accuracy alone doesn't
+show it knows more than the market. The market already picks winners at ~62–65% because favorites
 win often; the bar is beating the *closing line* (52.4% break-even at −110
 against the line, not against a coin flip). We've shown skill; we have **not**
 shown skill the market hasn't already priced.
@@ -128,10 +144,14 @@ market signal, and we already have game dates + `etl/venue_coords.json`.
   Side-note: the defensive shot-volume signal hints a **possession/Corsi term**
   (the model is pure-xG and ignores raw shot volume) could be a small feature.
 
-## The edge test vs. closing odds — RESULT (2026-07): no edge
+## Validation against closing lines — RESULT (2026-07): matches the market, doesn't beat it
 
-`score_vs_odds.py` devigs closing moneylines, bets where model prob − market
-prob > `--edge`, and reports ROI, closing-line value, and favorite/underdog/
+`score_vs_odds.py` removes the bookmaker margin ("devigs") from closing
+moneylines to get the market's probability for each game, then measures what
+happens in the games where the model disagrees with the market by more than
+`--edge`. The return of a hypothetical flat stake on the model's side is a
+standard, unforgiving way to score those disagreements: positive means the
+model was right more often than the market implied. It reports that return (ROI), closing-line value, and favorite/underdog/
 maturity breakdowns. `fetch_sbr_odds.py` pulls the closing lines from Sportsbook
 Reviews Online (free archive, 2018-19 .. 2022-23) and maps them to gamePk.
 
@@ -142,7 +162,7 @@ python score_vs_odds.py --preds preds.csv --odds odds.csv          # score it
 python score_vs_odds.py --self-test                                # validate the math
 ```
 
-**Verdict: the model does NOT beat the market.** 4 out-of-sample seasons
+**Verdict: the model does not outperform the market.** 4 out-of-sample seasons
 (2019-20 .. 2022-23), 3,497 games matched to closing lines:
 
 | Bet filter | Bets | Win % | ROI |
@@ -159,11 +179,12 @@ skill is entirely priced in. Favorites ≈ breakeven; underdogs negative; the on
 non-negative slice is early-season (<20 gp), but that's noise and the model is
 weakest there. The "underdog value" and "mature-game" hypotheses are falsified.
 
-**Bottom line for monetization:** 58.9% is a genuinely skilled, well-calibrated
-winner-picker — and it has **no exploitable straight-moneyline edge** in
-2019-2023. Not bettable as-is.
+**Bottom line:** 58.9% is a genuinely skilled, well-calibrated winner-picker
+whose information is **already priced in** by the market (2019-2023). That's
+the expected result for a model built only on public shot data, and a useful
+validation that it's measuring something real rather than overfitting.
 
-## Rest / back-to-backs / travel — a real market bias, not yet a bankable edge
+## Rest / back-to-backs / travel — a real market bias that later faded
 
 `fatigue_market_test.py` asks whether the *market* under-prices fatigue (not just
 whether it affects games). Unlike the model — which was priced-in everywhere —
@@ -180,7 +201,7 @@ fatigue shows the **first genuine crack in market efficiency**:
 are lined at 50.0% — the market over-weights home ice and under-adjusts for
 fatigue. Fading the tired team returned **+4.3% ROI over 937 bets** vs the close.
 
-**But it is not yet a bankable edge:**
+**But it isn't robust:**
 - Season-unstable: per-season ROI was +1.6%, **−4.0%**, +26% (COVID bubble,
   n=66, unrepresentative), +11%, **−8.3%** — 2 of 5 seasons negative, and the
   aggregate leans on the empty-arena COVID season.
@@ -192,7 +213,7 @@ fatigue. Fading the tired team returned **+4.3% ROI over 937 bets** vs the close
 
 Verdict: a real, directionally-sensible bias worth pursuing — the market
 under-prices home-team back-to-back fatigue — but the sample is too thin and
-season-to-season too inconsistent to bet on. It points somewhere real.
+season-to-season too inconsistent to rely on. It points somewhere real.
 
 ### The effect is fading (free robustness check, our own data)
 
@@ -202,13 +223,13 @@ persists — it needs only schedule + outcomes, which we have for all 8 seasons:
 | Era | home-b2b games | home win % |
 |---|---|---|
 | 2018–2023 (where the edge showed) | 283 | **41.3%** |
-| 2023–2026 (the seasons we'd pay for) | 217 | **48.8%** |
+| 2023–2026 (no free odds archive) | 217 | **48.8%** |
 
 2025-26 (complete) shows **53.9%** — no effect; tired home teams now win at their
 normal home rate. The signal that powered the +4.3% ROI has decayed toward league
 average (likely league-wide load-management + market adjustment). So buying
-2023-26 closing odds would most likely just confirm the edge has closed. **Don't
-spend on odds.**
+2023-26 closing odds would most likely just confirm the bias has closed, so
+recent odds weren't worth sourcing.
 
 ### Odds sources surveyed (for the record)
 
@@ -260,11 +281,11 @@ units, line combos, late scratches, goalie confirmations) and line shopping
 across books — *not* better historical modelling. That's a news-pipeline and
 multi-account operation, not an analytics project.
 
-### Conclusion of the monetization investigation
+### Conclusion
 
-The model is a genuinely skilled, well-calibrated **58.9% winner-picker with no
-straight-moneyline edge** — its skill is priced in. The one market inefficiency
-we found (tired home teams) was real in 2018-2023 but has **faded** in recent
-seasons. Net: **treat this as an analytics / content asset, not a betting
-engine.** If still curious, forward paper-trade the fade-tired-home rule at zero
-cost rather than paying for data on a signal that's already decaying.
+The model is a genuinely skilled, well-calibrated **58.9% winner-picker whose
+information is already reflected in closing lines.** The one market
+inefficiency we found (tired home teams) was real in 2018-2023 but has
+**faded** in recent seasons. Net: the model is a sound analytical tool for
+previews and explanation — it describes matchups as well as the market prices
+them — and the backtest framework is reusable for testing future features.
