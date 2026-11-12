@@ -25,8 +25,10 @@ game outcomes, so they're the strictest test of whether a model knows anything.
 
 **Headline result:** the matchup model picks winners at **58.9%** out of sample
 (home team wins 53.6%), and its probabilities are well calibrated — when it says
-60%, teams win about 60%. Against closing lines it matches the market but does
-not beat it: the information it captures is already priced in. The write-up
+60%, teams win about 60%. It still trails the betting market: on the same 3,497
+games, closing-line favorites won 60.8% to the model's 59.2%, and the market's
+probabilities score better. Skilled and well calibrated, but behind the closing
+line — the information it captures is already priced in. The write-up
 covers how leakage was ruled out, what improved the model (the starting goalie),
 the four refinements that didn't, and why player props and game totals are
 dominated by randomness.
