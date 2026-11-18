@@ -11,8 +11,9 @@ is season-level, not per-game.
 
 IMPORTANT: The Edge API is unofficial/reverse-engineered, so exact
 field names in the response aren't fully documented. This script:
-  1. Saves the FULL raw JSON response (in `raw_json`), so nothing
-     is lost even if a field name guess below is wrong.
+  1. Saves the FULL raw JSON response (in `raw_json`) for goalies only.
+     Skater JSON stopped being stored in 2026-11 to fit the free plan; the
+     skater fields below are confirmed against real responses.
   2. Makes a best-effort attempt to extract common fields into
      dedicated columns for easy querying.
 
@@ -255,7 +256,11 @@ def upsert_edge_row(sb, player, season, game_type_label, payload):
         "player_id": player_id,
         "season": season,
         "game_type": game_type_label,
-        "raw_json": payload,
+        # Skaters' useful fields are extracted into columns above, so their
+        # ~3 KB JSON isn't stored: it was rewritten for everyone who played,
+        # every night, and was most of this table's size. Goalies keep it —
+        # nothing goalie-specific is extracted yet. (Re-pullable from the API.)
+        "raw_json": payload if is_goalie else None,
         # Upserts don't touch updated_at on their own; stamp it so you can see
         # when a row was last refreshed.
         "updated_at": datetime.now(timezone.utc).isoformat(),
