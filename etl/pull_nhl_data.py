@@ -330,10 +330,15 @@ MAX_LOOKBACK_DAYS = 120
 
 
 def earliest_incomplete_game_date(sb):
-    """Date of the oldest placeholder game row (see get_existing_game_ids), or None."""
+    """Date of the oldest placeholder game row (see get_existing_game_ids), or None.
+
+    A missing score counts only for regular/playoff games: two cancelled
+    preseason games (TBL, 2022 and 2024 hurricanes) never get one and would
+    otherwise pin every run's window to the 120-day cap."""
     rows = (
         sb.table("games").select("game_date")
-        .or_("game_type.is.null,home_team_id.is.null,home_score.is.null")
+        .or_("game_type.is.null,home_team_id.is.null,"
+             "and(home_score.is.null,game_type.neq.preseason)")
         .order("game_date")
         .limit(1)
         .execute()

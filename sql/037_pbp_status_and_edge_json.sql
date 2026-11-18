@@ -44,3 +44,8 @@ alter table public.shot_events       set (autovacuum_vacuum_scale_factor = 0.02,
 --    were a day late; corrected 2026-11-18 from the NHL schedule's local
 --    dates. Earlier seasons were checked against the schedule and are correct.
 --    The script now uses the schedule week's local date.
+--    A game-night test run then put 123 of those dates back: its weather step
+--    read games before the repair and upserted them (with game_date) after.
+--    Re-repaired 2026-11-18 against the schedule. 2026-27 weather was nulled
+--    because it had been stamped for the wrong (UTC) day; the daily weather
+--    step re-stamps it. backfill_weather.py now reads finished games only.

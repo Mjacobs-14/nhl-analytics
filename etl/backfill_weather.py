@@ -129,7 +129,10 @@ def main():
     page_size = 1000
     offset = 0
     while True:
-        q = sb.table("games").select("game_id, game_date, season, venue, temp_c, humidity_pct")
+        # Finished games only: an unfinished row's date may not be final yet,
+        # and this upsert writes game_date back as read.
+        q = (sb.table("games").select("game_id, game_date, season, venue, temp_c, humidity_pct")
+             .not_.is_("home_score", "null").order("game_id"))
         q = q.range(offset, offset + page_size - 1)
         rows = q.execute().data
         if not rows:
