@@ -17,14 +17,15 @@ MATCHUP = {
     "st": "select * from team_strength_location_v",
 
     # Games played per season/team/venue (denominator for per-game rates).
+    # Finished games only: tonight's scheduled/live rows have no score yet.
     "gp": """
         select season, team, venue, count(*) as gp
         from (
           select season, home_team_id as team, 'home' as venue, game_id
-            from games where game_type='regular'
+            from games where game_type='regular' and home_score is not null
           union all
           select season, away_team_id, 'road', game_id
-            from games where game_type='regular'
+            from games where game_type='regular' and home_score is not null
         ) x
         group by season, team, venue
         order by season, team, venue
@@ -82,12 +83,24 @@ MATCHUP = {
     """,
 }
 
+# Traded players are shown with their most-played team that season (same rule
+# as player_clutch_v). The views don't carry a team, so it is added here.
+PRIMARY_TEAM = """
+    left join lateral (
+      select s2.team_id as team from player_game_stats s2
+      where s2.player_id = v.player_id and s2.season::text = v.season::text
+      group by s2.team_id order by count(*) desc limit 1
+    ) pt on true
+"""
+
 # ------------------------------------------------------------ goalie hot hand
 # goalie_streak_v (80 rows, min 100 starts) + a per-season start timeline.
 GOALIE = """
     select gs.*,
       (select json_object_agg(season, arr) from (
-         select gg.season, json_agg(gg.sv_pct order by gg.game_date) as arr
+         -- per season: start-by-start SV% x1000, dot-joined, in date order
+         select gg.season,
+                string_agg(round(gg.sv_pct * 1000)::int::text, '.' order by gg.game_date) as arr
          from goalie_game_v gg
          where gg.player_id = gs.player_id
          group by gg.season
@@ -98,16 +111,15 @@ GOALIE = """
 
 # --------------------------------------------------------------- shot quadrants
 # Verified: 5563 rows, exact match to snapshot.
-QUADRANTS = "select * from player_shot_volume_output_v"
+QUADRANTS = ("select v.*, pt.team as primary_team from player_shot_volume_output_v v"
+             + PRIMARY_TEAM)
 
 # ------------------------------------------------------------ edge athleticism
 # NHL Edge tracking, 2021-22 onward. Rows without tracking data are dropped.
 # NOTE: row count drifts from the 2026-07-14 snapshot (3552 then, 4733 now) —
 # Edge data has been backfilled since. The definition is unchanged.
-EDGE = """
-    select * from player_athleticism_v
-    where top_skating_speed_mph is not null
-"""
+EDGE = ("select v.*, pt.team as primary_team from player_athleticism_v v"
+        + PRIMARY_TEAM + " where v.top_skating_speed_mph is not null")
 
 # ---------------------------------------------------------- coach fingerprints
 # Verified: 282 rows, and the style<->rush join is 1:1 at (coach, team, season).

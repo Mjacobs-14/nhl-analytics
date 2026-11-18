@@ -27,8 +27,8 @@ for r in rows:
     by_season[str(r['season'])].append(f"{i}.{gp}.{ppg}.{s60}.{ti}")
 
 seasons = sorted(by_season)
-assert len(seasons) == 8, seasons
-assert 900 < len(players) < 2000, len(players)
+assert len(seasons) >= 8, seasons
+assert 900 < len(players) < 3000, len(players)
 assert 30 <= len(teams) <= 70, len(teams)
 for p in players:
     assert '`' not in p and '${' not in p

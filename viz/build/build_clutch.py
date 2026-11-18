@@ -48,7 +48,7 @@ for season in sorted(by_season):
         round(100.0*sum(r['pts_close'] for r in rs)/tot, 1),
         round(100.0*sum(r['pts_late_close'] for r in rs)/tot, 1)]
 
-assert len(LG) == 8, sorted(LG)
+assert len(LG) >= 8, sorted(LG)
 assert all(len(v) == 9 for v in LG.values())
 assert 90 < sum(LG[max(LG)][:7]) < 110, LG[max(LG)]
 print(f"OK: {len(rows)} player-seasons, {len(names)} players, {len(teams)} teams, {len(RAW)} seasons")

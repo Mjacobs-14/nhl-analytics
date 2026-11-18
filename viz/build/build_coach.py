@@ -22,8 +22,8 @@ for r in rows:
     ])
 
 seasons = sorted({r[2] for r in FLAT})
-assert len(seasons) == 8, seasons
-assert 200 < len(FLAT) < 400, len(FLAT)
+assert len(seasons) >= 8, seasons
+assert 200 < len(FLAT) < 600, len(FLAT)
 rush_have = sum(1 for r in FLAT if r[16] is not None)
 assert rush_have > 250, rush_have
 for r in FLAT:

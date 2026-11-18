@@ -87,6 +87,22 @@ idx . season . teamIdx . gp . tied.up1.up2.up3.down1.down2.down3 . lc . glc . ot
 LG[season] = [tied,up1,up2,up3,down1,down2,down3, close, late]  (% of league pts)
 ```
 
+## 2026-11-17 refresh: query fixes
+
+The first live rebuild showed three queries didn't return what their builders
+read (the July verification had used the original dumps, not these queries):
+
+- `QUADRANTS` / `EDGE`: the builders read `primary_team`, which neither view
+  has. Added the same rule as `player_clutch_v` (team with the most games that
+  season). Checked against the July dumps: 4117/4117 and 2518/2521 match (the 3
+  are ties).
+- `GOALIE`: the timeline is a dot-joined string of SV%×1000 per start, not a
+  JSON array. Checked: 377/377 goalie-season timelines identical.
+- `gp` (matchup) now counts finished games only, so scheduled or in-progress
+  rows don't add a game played.
+
+The "exactly 8 seasons" asserts are now "at least 8", so new seasons build.
+
 ## Known gaps
 
 - **Row-count drift vs the July snapshot** (definitions unchanged, data grew):

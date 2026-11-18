@@ -26,8 +26,8 @@ for r in rows:
 
 teams = sorted(teams)
 seasons = sorted({r[2] for r in FLAT})
-assert 4 <= len(seasons) <= 6, seasons
-assert 1500 < len(FLAT) < 5000, len(FLAT)
+assert 4 <= len(seasons) <= 10, seasons
+assert 1500 < len(FLAT) < 12000, len(FLAT)
 assert 30 <= len(teams) <= 70, len(teams)
 for r in FLAT:
     assert 15 < r[4] < 27, r[:5]            # top speed mph plausible

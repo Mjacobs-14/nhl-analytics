@@ -20,7 +20,7 @@ GK = [{'s': str(r['season']), 't': r['team'], 'n': r['gk_name'], 'sh': r['shots'
        'gh': f(r['sv_hd']), 'gm': f(r['sv_md']), 'gl': f(r['sv_ld'])} for r in data['goalies']]
 
 seasons = sorted({d['s'] for d in ST})
-assert len(seasons) == 8, seasons
+assert len(seasons) >= 8, seasons
 ev_sf = sum(d['sf'] for d in ST if d['k'] == 'ev')
 pp_sf = sum(d['sf'] for d in ST if d['k'] == 'pp')
 assert 0.15 < pp_sf / ev_sf < 0.35, (ev_sf, pp_sf)   # PP ~ 20-25% of EV volume
