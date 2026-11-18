@@ -1,0 +1,73 @@
+name: Publish viz pages
+
+# Rebuilds the six viz/ pages from the live views after each daily data pull
+# and publishes them to GitHub Pages. Nothing is committed: the committed
+# viz/*.html stay as the reviewed snapshot, and the site is always fresh.
+#
+# One-time setup: Settings -> Pages -> Source: "GitHub Actions".
+
+on:
+  workflow_run:
+    workflows: ["Daily NHL Data Pull"]
+    types: [completed]
+  workflow_dispatch: {}   # manual rebuild from the Actions tab
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: viz-pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    # Publish only after a successful pull, so a half-finished night never
+    # replaces the last good pages.
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install "psycopg[binary]>=3.1"
+
+      - name: Build pages from the live views
+        working-directory: viz/build
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          set -e
+          mkdir -p ../../_site
+          python build_matchup.py   ../../_site/matchup_lab.html
+          python build_goalie.py    ../../_site/goalie_hot_hand.html
+          python build_quadrants.py ../../_site/shot_quadrants.html
+          python build_edge.py      ../../_site/edge_athleticism.html
+          python build_coach.py     ../../_site/coach_fingerprints.html
+          python build_clutch.py    ../../_site/clutch.html
+
+      - name: Write index page
+        run: python viz/build/make_index.py _site
+
+      - name: Upload site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
