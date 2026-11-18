@@ -20,7 +20,12 @@ light/dark theming.
 | `goalie_hot_hand.html` | Goalie streakiness vs quality, with click-to-open hot/cold start timelines | `goalie_streak_v`, `goalie_game_v` |
 | `matchup_lab.html` | Two-team style-clash previews: EV + power-play terms (road-vs-home profiles × concessions × goalie band SV%, starter override), rush transition clash | `team_strength_location_v`, `goalie_location_v` |
 
-**Snapshot date:** 2026-07-14 (8 seasons, 2018–2026; Edge 2021–2026).
+**Snapshot date:** 2026-11-17 (9 seasons, 2018-19 through 2026-27 to date; Edge 2021-22 onward).
+Regenerate with the scripts in `build/` (see `build/README.md`).
+**Auto-updating copy:** `.github/workflows/viz.yml` rebuilds all six pages from the
+live views after every successful daily pull and publishes them to GitHub Pages
+(enable once: Settings → Pages → Source: GitHub Actions). Early in a season
+the current year is thin: the pages keep their minimum-games floors (e.g. 20 GP).
 
 **Note on team assignment:** traded players are shown with their most-played
 team that season, using full-season stats (the only consistent choice, since
