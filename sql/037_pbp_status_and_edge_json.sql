@@ -25,3 +25,10 @@ update public.player_season_edge_stats e
    set raw_json = null
   from public.players p
  where p.player_id = e.player_id and p.position <> 'G' and e.raw_json is not null;
+
+-- 3. Clean up dead rows sooner on the two big, append-heavy tables. Each
+--    player_game_stats row is rewritten once (shift backfill); the default
+--    20% threshold let tens of thousands of dead rows accumulate before
+--    autovacuum made the space reusable.
+alter table public.player_game_stats set (autovacuum_vacuum_scale_factor = 0.02, autovacuum_analyze_scale_factor = 0.02);
+alter table public.shot_events       set (autovacuum_vacuum_scale_factor = 0.02, autovacuum_analyze_scale_factor = 0.02);
