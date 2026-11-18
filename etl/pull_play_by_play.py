@@ -116,62 +116,33 @@ def game_state_label(diff):
 
 
 def get_games_to_process(sb, season=None, limit=None):
-    if limit:
-        query = sb.table("games").select("game_id, season")
-        if season:
-            query = query.eq("season", season)
-        query = query.limit(limit)
-        return query.execute().data
+    """Every game with flags for what's already loaded, from pbp_game_status_v
+    (sql/037). One small row per game instead of paging every shot row — the
+    old way read ~1,300 pages of shot_events and the deep pages hit the API's
+    8s statement_timeout (daily job failed 2026-11-02 and 11-16).
 
-    # No limit requested — page through everything (PostgREST caps
-    # unpaginated selects at 1000 rows, which silently truncated this
-    # before).
+    Keyset-paged on game_id: OFFSET paging would make each page recompute the
+    flags for every game before it (~14s for the last page)."""
     games = []
     page_size = 1000
-    offset = 0
+    last_id = 0
     while True:
-        query = sb.table("games").select("game_id, season")
+        query = (
+            sb.table("pbp_game_status_v")
+            .select("game_id, season, has_shots, has_rush, has_goals")
+            .gt("game_id", last_id)
+            .order("game_id")
+        )
         if season:
             query = query.eq("season", season)
-        query = query.range(offset, offset + page_size - 1)
-        rows = query.execute().data
+        rows = query.limit(min(page_size, limit - len(games)) if limit else page_size).execute().data
         if not rows:
             break
         games.extend(rows)
-        if len(rows) < page_size:
+        last_id = rows[-1]["game_id"]
+        if len(rows) < page_size or (limit and len(games) >= limit):
             break
-        offset += page_size
     return games
-
-
-def get_existing_game_ids(sb, table, event_type=None, not_null=None):
-    """Distinct game_ids already present in `table`, so reruns skip them.
-
-    If not_null is given, only games with at least one row where that column
-    is set count as done — used to resume a `--refresh-shots` pass after a
-    shot-extraction change adds a column: games processed by the new code
-    have it populated, so it cleanly marks which games a prior refresh
-    reached. (Currently `is_rush`; before that it was event_type='blocked-shot'
-    via the event_type filter.)
-    """
-    existing = set()
-    page_size = 1000
-    offset = 0
-    while True:
-        query = sb.table(table).select("game_id")
-        if event_type is not None:
-            query = query.eq("event_type", event_type)
-        if not_null is not None:
-            query = query.not_.is_(not_null, "null")
-        result = query.range(offset, offset + page_size - 1).execute()
-        rows = result.data
-        if not rows:
-            break
-        existing.update(r["game_id"] for r in rows)
-        if len(rows) < page_size:
-            break
-        offset += page_size
-    return existing
 
 
 # All shot attempts (Corsi). shot-on-goal / missed-shot / goal carry the
@@ -377,19 +348,18 @@ def main():
 
     # Goals and shots are tracked separately so games processed before
     # shot_events existed still get their shots extracted on rerun.
-    done_goals = set() if args.force else get_existing_game_ids(sb, "goal_events")
-    if args.force:
-        done_shots = set()
-    elif args.refresh_shots:
-        # Resume-aware refresh: skip games whose shot rows already have
-        # is_rush set (the current shot logic reached them) so an interrupted
-        # run picks up where it left off instead of re-fetching every game.
-        done_shots = get_existing_game_ids(sb, "shot_events", not_null="is_rush")
-    else:
-        done_shots = get_existing_game_ids(sb, "shot_events")
+    def needs_work(g):
+        if args.force:
+            return True
+        if args.refresh_shots:
+            # Resume-aware refresh: games whose shot rows already have is_rush
+            # set were reached by the current shot logic, so an interrupted run
+            # picks up where it left off.
+            return not g["has_goals"] or not g["has_rush"]
+        return not g["has_goals"] or not g["has_shots"]
+
     before = len(games)
-    games = [g for g in games
-             if g["game_id"] not in done_goals or g["game_id"] not in done_shots]
+    games = [g for g in games if needs_work(g)]
     if before - len(games):
         print(f"  {before - len(games)} already processed — skipping those, "
               f"processing the remaining {len(games)}.")
@@ -408,8 +378,8 @@ def main():
             try:
                 goals, shots = process_game(
                     sb, g["game_id"], future.result(),
-                    do_goals=g["game_id"] not in done_goals,
-                    do_shots=g["game_id"] not in done_shots,
+                    do_goals=args.force or not g["has_goals"],
+                    do_shots=args.force or not (g["has_rush"] if args.refresh_shots else g["has_shots"]),
                 )
                 total_goals += goals
                 total_shots += shots

@@ -143,6 +143,11 @@ def collect_games_in_range(start: date, end: date):
                 for g in week.get("games", []):
                     if g["id"] not in seen_game_ids:
                         seen_game_ids.add(g["id"])
+                        # Schedule games carry no local gameDate, only
+                        # startTimeUTC -- whose date is the NEXT day for any
+                        # 7pm-Eastern-or-later start. The week bucket's date is
+                        # the local game date.
+                        g["_local_date"] = week["date"]
                         all_games.append(g)
         current += timedelta(days=7)
         time.sleep(1.5)  # wider pause between schedule calls — the API appears to have a longer memory today
@@ -179,6 +184,16 @@ def upsert_team(sb, team_id, team_name):
     }), description=f"team {team_id}")
 
 
+FINAL_STATES = ("OFF", "FINAL")
+
+
+def game_local_date(game_json):
+    """Local (arena-day) game date: the schedule week's date when we have it,
+    else gameDate, else the UTC start date as a last resort."""
+    return (game_json.get("_local_date") or game_json.get("gameDate", "")[:10]
+            or game_json.get("startTimeUTC", "")[:10] or None)
+
+
 def upsert_game(sb, game_json, boxscore_json):
     game_id = game_json["id"]
     home = game_json["homeTeam"]
@@ -189,7 +204,7 @@ def upsert_game(sb, game_json, boxscore_json):
 
     db_execute(sb.table("games").upsert({
         "game_id": game_id,
-        "game_date": game_json.get("gameDate", "")[:10] or game_json.get("startTimeUTC", "")[:10],
+        "game_date": game_local_date(game_json),
         "season": game_json.get("season"),
         "game_type": {1: "preseason", 2: "regular", 3: "playoff"}.get(game_json.get("gameType"), "unknown"),
         "home_team_id": home.get("abbrev"),
@@ -273,8 +288,8 @@ def get_existing_game_ids(sb):
     """Pulls the set of game_ids already fully loaded, so reruns can skip
     anything already fetched instead of redoing everything.
 
-    "Fully loaded" means the boxscore pull has written the row (game_type and
-    home team set). Other steps can leave placeholder rows: `npm run ingest`
+    "Fully loaded" means the boxscore pull has written a finished game (game
+    type, home team and final score set). Other steps can leave placeholder rows: `npm run ingest`
     inserts bare (game_id, date, season) rows to satisfy player_game_stats'
     foreign key, expecting this script to fill them in. Counting those as
     done is how the Oct 17 2026 games stayed broken — so they are refetched."""
@@ -286,6 +301,7 @@ def get_existing_game_ids(sb):
             sb.table("games").select("game_id")
             .not_.is_("game_type", "null")
             .not_.is_("home_team_id", "null")
+            .not_.is_("home_score", "null")
             .order("game_id")
             .range(offset, offset + page_size - 1)
             .execute()
@@ -314,10 +330,15 @@ MAX_LOOKBACK_DAYS = 120
 
 
 def earliest_incomplete_game_date(sb):
-    """Date of the oldest placeholder game row (see get_existing_game_ids), or None."""
+    """Date of the oldest placeholder game row (see get_existing_game_ids), or None.
+
+    A missing score counts only for regular/playoff games: two cancelled
+    preseason games (TBL, 2022 and 2024 hurricanes) never get one and would
+    otherwise pin every run's window to the 120-day cap."""
     rows = (
         sb.table("games").select("game_date")
-        .or_("game_type.is.null,home_team_id.is.null")
+        .or_("game_type.is.null,home_team_id.is.null,"
+             "and(home_score.is.null,game_type.neq.preseason)")
         .order("game_date")
         .limit(1)
         .execute()
@@ -361,6 +382,16 @@ def run_for_range(sb, start: date, end: date, max_workers: int = 3, force: bool 
     if not games:
         return
 
+    # Only finished games. Unstarted or live games would be stored with no or
+    # partial scores and then skipped forever as "already loaded".
+    unfinished = [g for g in games if g.get("gameState") not in FINAL_STATES]
+    if unfinished:
+        print(f"  Skipping {len(unfinished)} game(s) not final yet "
+              f"({', '.join(sorted({str(g.get('gameState')) for g in unfinished}))}).")
+    games = [g for g in games if g.get("gameState") in FINAL_STATES]
+    if not games:
+        return
+
     if not force:
         existing_ids = get_existing_game_ids(sb)
         before = len(games)
@@ -388,7 +419,7 @@ def run_for_range(sb, start: date, end: date, max_workers: int = 3, force: bool 
                 upsert_players_and_stats(
                     sb, g["id"], boxscore,
                     season=g.get("season"),
-                    game_date=(g.get("gameDate", "") or g.get("startTimeUTC", ""))[:10] or None,
+                    game_date=game_local_date(g),
                 )
             except Exception as e:
                 print(f"  ! DB error on game {g['id']}: {e}")

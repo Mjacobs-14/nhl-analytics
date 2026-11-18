@@ -114,14 +114,16 @@ def db_execute(query_builder, retries=3, description=""):
 
 
 def get_games_to_process(sb, season=None, limit=None, force=False, coaches_only=False):
-    """Games rows (id, date, season) still missing details, oldest first."""
+    """Finished games (id, date, season) still missing details, oldest first."""
     games = []
     page_size = 1000
     offset = 0
     while True:
         query = sb.table("games").select(
             "game_id, game_date, season, attendance, referees, home_coach, away_coach"
-        )
+        # Finished games only: a live game's shift chart is partial, and once
+        # attendance/refs are set the game would never be revisited.
+        ).not_.is_("home_score", "null")
         if season:
             query = query.eq("season", season)
         query = query.order("game_id").range(offset, offset + page_size - 1)
