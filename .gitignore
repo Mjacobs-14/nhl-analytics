@@ -30,3 +30,7 @@ npm-debug.log*
 
 # viz snapshot caches (data, not source)
 viz/build/snap/
+viz/build/__pycache__/
+
+# local data archives (not source)
+archive/

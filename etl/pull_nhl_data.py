@@ -17,7 +17,8 @@ SETUP (one-time):
        SUPABASE_KEY=...
 5. pip install -r requirements.txt
 6. Run: python pull_nhl_data.py --date 2026-01-15
-   (or --start-date / --end-date for a range, or no args for "yesterday")
+   (or --start-date / --end-date for a range, or no args for the past week
+   through yesterday — complete games are skipped, so missed days self-heal)
 
 You should not need to edit anything below this line to get started.
 """
@@ -269,13 +270,26 @@ def toi_to_seconds(toi_str):
 
 
 def get_existing_game_ids(sb):
-    """Pulls the set of game_ids already in the database, so reruns can
-    skip anything already fetched instead of redoing everything."""
+    """Pulls the set of game_ids already fully loaded, so reruns can skip
+    anything already fetched instead of redoing everything.
+
+    "Fully loaded" means the boxscore pull has written the row (game_type and
+    home team set). Other steps can leave placeholder rows: `npm run ingest`
+    inserts bare (game_id, date, season) rows to satisfy player_game_stats'
+    foreign key, expecting this script to fill them in. Counting those as
+    done is how the Oct 17 2026 games stayed broken — so they are refetched."""
     existing = set()
     page_size = 1000
     offset = 0
     while True:
-        result = sb.table("games").select("game_id").range(offset, offset + page_size - 1).execute()
+        result = (
+            sb.table("games").select("game_id")
+            .not_.is_("game_type", "null")
+            .not_.is_("home_team_id", "null")
+            .order("game_id")
+            .range(offset, offset + page_size - 1)
+            .execute()
+        )
         rows = result.data
         if not rows:
             break
@@ -288,6 +302,45 @@ def get_existing_game_ids(sb):
 
 def run_for_date(sb, day: date):
     run_for_range(sb, day, day)
+
+
+# The default run looks back this far, so a day the job didn't run (disabled
+# workflow, failed run, GitHub outage) is picked up next time instead of
+# being lost. Complete games are skipped, so the overlap costs only a couple
+# of schedule calls.
+LOOKBACK_DAYS = 7
+# ...and further back to the oldest placeholder game, but never beyond this.
+MAX_LOOKBACK_DAYS = 120
+
+
+def earliest_incomplete_game_date(sb):
+    """Date of the oldest placeholder game row (see get_existing_game_ids), or None."""
+    rows = (
+        sb.table("games").select("game_date")
+        .or_("game_type.is.null,home_team_id.is.null")
+        .order("game_date")
+        .limit(1)
+        .execute()
+        .data
+    )
+    if not rows or not rows[0].get("game_date"):
+        return None
+    return datetime.strptime(rows[0]["game_date"][:10], "%Y-%m-%d").date()
+
+
+def default_window(sb, today: date):
+    """(start, end) for a no-argument run: the last LOOKBACK_DAYS days through
+    yesterday, extended back to the oldest placeholder game (capped)."""
+    end = today - timedelta(days=1)
+    start = end - timedelta(days=LOOKBACK_DAYS - 1)
+    oldest = earliest_incomplete_game_date(sb)
+    if oldest and oldest < start:
+        floor = end - timedelta(days=MAX_LOOKBACK_DAYS)
+        if oldest < floor:
+            print(f"  ! Placeholder games go back to {oldest}; only reaching back to {floor}. "
+                  f"Run with --start-date {oldest} --end-date {end} to repair the rest.")
+        start = max(oldest, floor)
+    return start, end
 
 
 def _fetch_boxscore_task(g):
@@ -364,8 +417,10 @@ def main():
         d1 = datetime.strptime(args.end_date, "%Y-%m-%d").date()
         run_for_range(sb, d0, d1, max_workers=args.workers, force=args.force)
     else:
-        # default: yesterday's games
-        run_for_date(sb, date.today() - timedelta(days=1))
+        # default: the past week through yesterday (plus any older placeholder
+        # games), skipping games already fully loaded
+        start, end = default_window(sb, date.today())
+        run_for_range(sb, start, end, max_workers=args.workers)
 
     print("Done.")
 

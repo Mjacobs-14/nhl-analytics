@@ -321,7 +321,13 @@ def process_game(sb, game_id, payload, do_goals=True, do_shots=True):
             "away_score_after": away_score_after,
             "scoring_team_diff_before": diff_before,
             "game_state_before": state_label,
-            "raw_details": details,
+            # The full raw `details` JSON used to be stored here (~500 bytes/goal,
+            # mostly video-clip URLs). Only the fields worth keeping are stored now.
+            "scorer_id": details.get("scoringPlayerId"),
+            "assist1_id": details.get("assist1PlayerId"),
+            "assist2_id": details.get("assist2PlayerId"),
+            "goalie_id": details.get("goalieInNetId"),
+            "shot_type": details.get("shotType"),
         }, on_conflict="game_id,event_id"), description=f"goal_events {game_id}/{event_id}")
 
         # Attribute the goal + assists to individual players

@@ -10,6 +10,7 @@
     "db:apply": "tsx scripts/apply-sql.ts",
     "ingest": "tsx scripts/ingest.ts",
     "cook": "tsx scripts/cook.ts",
+    "refresh:mvs": "tsx scripts/refresh-mvs.ts",
     "setup": "npm run db:apply && npm run ingest && npm run cook"
   },
   "dependencies": {
