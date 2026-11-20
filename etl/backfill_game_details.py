@@ -175,6 +175,13 @@ def get_stat_row_players(sb, game_ids):
     return pairs
 
 
+def official_name(o):
+    """Referee/linesman name from the right-rail feed. Through 2025-26 each
+    entry was {"default": name}; from 2026-27 it is
+    {"fullName": {"default": name}, "sweaterNumber": n}. Accept both."""
+    return o.get("default") or (o.get("fullName") or {}).get("default")
+
+
 def fetch_game_details(game, coaches_only=False):
     """Fetches shifts + officials + coaches + attendance for one game.
     With coaches_only, hits just the right-rail endpoint and patches only
@@ -211,8 +218,8 @@ def fetch_game_details(game, coaches_only=False):
                 patch = None
             return game, shifts_by_player, patch, None
 
-        refs = [r.get("default") for r in info.get("referees", []) if r.get("default")]
-        lines = [l.get("default") for l in info.get("linesmen", []) if l.get("default")]
+        refs = [n for n in map(official_name, info.get("referees") or []) if n]
+        lines = [n for n in map(official_name, info.get("linesmen") or []) if n]
         if refs:
             patch["referees"] = refs
         if lines:
@@ -239,11 +246,22 @@ def main():
     parser.add_argument("--coaches-only", action="store_true",
                         help="Backfill just games.home_coach/away_coach (right-rail fetch only, "
                              "1 request/game). Resume-aware: games with both coaches set are skipped.")
+    parser.add_argument("--all-seasons", action="store_true",
+                        help="Retry missing details in every season. By default only the latest "
+                             "season is retried: older gaps are games the API has no data for "
+                             "(bubble playoffs, no-fan games, preseason) and never fill in.")
     parser.add_argument("--workers", type=int, default=3,
                         help="Games fetched in parallel (default 3 — NHL API rate-limits above this)")
     args = parser.parse_args()
 
     sb = get_supabase_client()
+
+    if args.season is None and not args.all_seasons:
+        latest = (sb.table("games").select("season").order("season", desc=True)
+                  .limit(1).execute().data)
+        if latest:
+            args.season = str(latest[0]["season"])
+            print(f"Latest season only ({args.season}); pass --all-seasons to retry older gaps.")
 
     games = get_games_to_process(sb, season=args.season, limit=args.limit,
                                  force=args.force, coaches_only=args.coaches_only)
